@@ -46,6 +46,7 @@ exports.GetProduct = async (req, res) => {
 };
 
 
+
 exports.CreateProduct = async (req, res) => {
   const { name, price, description, imageBase64, imageMimeType } = req.body;
   if (typeof name !== "string") {
