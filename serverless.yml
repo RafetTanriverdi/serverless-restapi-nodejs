@@ -1,0 +1,209 @@
+org: rafet
+app: rafet-test-api
+service: test-2
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  stage: dev
+  region: us-east-1
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:Query
+            - dynamodb:Scan
+            - dynamodb:GetItem
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+            - dynamodb:DeleteItem
+            - s3:PutObject
+            - s3:GetObject
+            - s3:ListBucket
+          Resource:
+            - Fn::GetAtt: [UsersTable, Arn]
+            - Fn::GetAtt: [ProductsTable, Arn]
+            - Fn::Join:
+                - "/"
+                - - Fn::GetAtt: [UsersTable, Arn]
+                  - "index/EmailIndex"
+            - "arn:aws:s3:::${self:custom.s3BucketName}/*"
+            - "arn:aws:s3:::${self:custom.s3BucketName}"
+        - Effect: Allow
+          Action:
+            - cognito-idp:AdminCreateUser
+            - cognito-idp:AdminGetUser
+          Resource: 
+            - arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+  environment:
+    USERS_TABLE: ${self:custom.usersTableName}
+    PRODUCTS_TABLE: ${self:custom.productsTableName}
+    REGION: us-east-1
+    USER_POOL_ID: us-east-1_cvkRA6Dxt
+    CLIENT_ID: 28uk26f3qb7uemsthiso24pk1s
+    ACCOUNT_ID: 895476881817
+    STRIPE_SECRET_KEY: sk_test_51PcQyIJ3JvdP9Vt6ojeKXlgqduNVX8YTMhayftJLXknx7WZIYeQSUHByrP7wOxhTtEOFW5nSEClesLYGhhC8lyio00uYkp8kc8
+    S3_BUCKET_NAME: ${self:custom.s3BucketName}
+
+custom:
+  usersTableName: "users-table-${self:provider.stage}"
+  productsTableName: "products-table-${self:provider.stage}"
+  s3BucketName: "product-images-${self:provider.stage}-${self:provider.region}"
+
+functions:
+  api:
+    handler: src/handler.handler
+    events:
+      - http:
+          path: users/{userId}
+          method: get
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: users/{userId}
+          method: delete
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: users/{userId}
+          method: patch
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: users
+          method: get
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: users
+          method: post
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: products/{productId}
+          method: get
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: products/{productId}
+          method: delete
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: products/{productId}
+          method: patch
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: products
+          method: get
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: products
+          method: post
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+
+resources:
+  Resources:
+    UsersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: email
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+        GlobalSecondaryIndexes:
+          - IndexName: EmailIndex
+            KeySchema:
+              - AttributeName: email
+                KeyType: HASH
+            Projection:
+              ProjectionType: ALL
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:custom.usersTableName}
+
+    ProductsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: productId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: productId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:custom.productsTableName}
+
+    S3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.s3BucketName}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedOrigins:
+                - "*"
+              AllowedHeaders:
+                - "*"
+              AllowedMethods:
+                - GET
+                - PUT
+                - POST
+                - DELETE
+              MaxAge: 3000
