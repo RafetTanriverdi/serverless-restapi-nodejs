@@ -1,6 +1,9 @@
+useDotenv: true
 org: rafet
 app: rafet-test-api
 service: test-2
+plugins:
+  - serverless-dotenv-plugin
 
 provider:
   name: aws
@@ -24,6 +27,7 @@ provider:
           Resource:
             - Fn::GetAtt: [UsersTable, Arn]
             - Fn::GetAtt: [ProductsTable, Arn]
+            - Fn::GetAtt: [CategoriesTable, Arn]
             - Fn::Join:
                 - "/"
                 - - Fn::GetAtt: [UsersTable, Arn]
@@ -34,27 +38,32 @@ provider:
           Action:
             - cognito-idp:AdminCreateUser
             - cognito-idp:AdminGetUser
-          Resource: 
+            - cognito-idp:AdminDeleteUser
+            - cognito-idp:AdminUpdateUserAttributes
+          Resource:
             - arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
   environment:
     USERS_TABLE: ${self:custom.usersTableName}
     PRODUCTS_TABLE: ${self:custom.productsTableName}
+    CATEGORIES_TABLE: ${self:custom.categoriesTableName}
     REGION: us-east-1
-    USER_POOL_ID: us-east-1_cvkRA6Dxt
-    CLIENT_ID: 28uk26f3qb7uemsthiso24pk1s
+    USER_POOL_ID: us-east-1_Dj3jiEcMk
+    CLIENT_ID: 28hs6lohmppetp6pgm6h3teu8e
     ACCOUNT_ID: 895476881817
-    STRIPE_SECRET_KEY: .env.Stripe_key
+    STRIPE_SECRET_KEY: ${env:STRIPE_SECRET_KEY}
     S3_BUCKET_NAME: ${self:custom.s3BucketName}
 
 custom:
   usersTableName: "users-table-${self:provider.stage}"
   productsTableName: "products-table-${self:provider.stage}"
+  categoriesTableName: "categories-table-${self:provider.stage}"
   s3BucketName: "product-images-${self:provider.stage}-${self:provider.region}"
 
 functions:
   api:
     handler: src/handler.handler
     events:
+      # User routes
       - http:
           path: users/{userId}
           method: get
@@ -105,6 +114,7 @@ functions:
               - Authorization
           authorizer:
             arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      # Product routes
       - http:
           path: products/{productId}
           method: get
@@ -147,6 +157,57 @@ functions:
             arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
       - http:
           path: products
+          method: post
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      # Category routes
+      - http:
+          path: categories/{categoryId}
+          method: get
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: categories/{categoryId}
+          method: delete
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: categories/{categoryId}
+          method: patch
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: categories
+          method: get
+          cors:
+            origin: "*"
+            headers:
+              - Content-Type
+              - Authorization
+          authorizer:
+            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: categories
           method: post
           cors:
             origin: "*"
@@ -190,6 +251,18 @@ resources:
             KeyType: HASH
         BillingMode: PAY_PER_REQUEST
         TableName: ${self:custom.productsTableName}
+
+    CategoriesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        AttributeDefinitions:
+          - AttributeName: categoryId
+            AttributeType: S
+        KeySchema:
+          - AttributeName: categoryId
+            KeyType: HASH
+        BillingMode: PAY_PER_REQUEST
+        TableName: ${self:custom.categoriesTableName}
 
     S3Bucket:
       Type: AWS::S3::Bucket

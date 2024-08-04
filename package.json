@@ -7,9 +7,11 @@
     "@aws-sdk/client-dynamodb": "^3.585.0",
     "@aws-sdk/lib-dynamodb": "^3.585.0",
     "aws-sdk": "^2.1659.0",
+    "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "jwks-rsa": "^3.1.0",
+    "serverless-dotenv-plugin": "^6.0.0",
     "serverless-http": "^3.2.0",
     "stripe": "^16.2.0",
     "uuid": "^10.0.0"

@@ -8,8 +8,14 @@ const client = new DynamoDBClient();
 const docClient = DynamoDBDocumentClient.from(client);
 
 exports.ListProducts = async (req, res) => {
+  const ownerId = req.user.sub; // Mevcut kullanıcı kimliği
+
   const params = {
     TableName: PRODUCTS_TABLE,
+    FilterExpression: "ownerId = :ownerId",
+    ExpressionAttributeValues: {
+      ":ownerId": ownerId,
+    },
   };
 
   try {
@@ -26,6 +32,7 @@ exports.ListProducts = async (req, res) => {
 
 exports.GetProduct = async (req, res) => {
   const { productId } = req.params;
+  const ownerId = req.user.sub;
 
   const params = {
     TableName: PRODUCTS_TABLE,
@@ -34,10 +41,10 @@ exports.GetProduct = async (req, res) => {
 
   try {
     const { Item } = await docClient.send(new GetCommand(params));
-    if (Item) {
+    if (Item && Item.ownerId === ownerId) {
       res.json(Item);
     } else {
-      res.status(404).json({ error: 'Could not find product with provided "productId"' });
+      res.status(404).json({ error: 'Could not find product or access denied' });
     }
   } catch (error) {
     console.error(error);
@@ -45,16 +52,19 @@ exports.GetProduct = async (req, res) => {
   }
 };
 
-
-
 exports.CreateProduct = async (req, res) => {
-  const { name, price, description, imageBase64, imageMimeType } = req.body;
-  if (typeof name !== "string") {
-    return res.status(400).json({ error: '"name" must be a string' });
-  } else if (typeof price !== "number") {
-    return res.status(400).json({ error: '"price" must be a number' });
-  } else if (typeof description !== "string") {
-    return res.status(400).json({ error: '"description" must be a string' });
+  const { name, price, description, imageBase64, imageMimeType, categoryId } = req.body;
+
+  // Kategori kontrolü
+  const categoryParams = {
+    TableName: process.env.CATEGORIES_TABLE,
+    Key: { categoryId },
+  };
+
+  const categoryData = await docClient.send(new GetCommand(categoryParams));
+
+  if (!categoryData.Item) {
+    return res.status(400).json({ error: "Invalid categoryId" });
   }
 
   let imageUrl;
@@ -73,7 +83,7 @@ exports.CreateProduct = async (req, res) => {
     const stripeProduct = await stripe.products.create({
       name,
       description,
-      images: [imageUrl], // Resim URL'sini burada Stripe ürününe ekliyoruz
+      images: [imageUrl],
     });
 
     const stripePrice = await stripe.prices.create({
@@ -93,12 +103,27 @@ exports.CreateProduct = async (req, res) => {
         imageUrl,
         stripeProductId: stripeProduct.id,
         stripePriceId: stripePrice.id,
+        categoryId,
+        categoryName: categoryData.Item.name,
         createdAt,
         updatedAt,
       },
     };
 
     await docClient.send(new PutCommand(params));
+
+    // Kategoriye bağlı ürün sayısını artır
+    const updateCategoryParams = {
+      TableName: process.env.CATEGORIES_TABLE,
+      Key: { categoryId },
+      UpdateExpression: "SET productCount = productCount + :inc",
+      ExpressionAttributeValues: {
+        ":inc": 1,
+      },
+    };
+
+    await docClient.send(new UpdateCommand(updateCategoryParams));
+
     res.json({
       productId,
       ownerId,
@@ -108,6 +133,8 @@ exports.CreateProduct = async (req, res) => {
       imageUrl,
       stripeProductId: stripeProduct.id,
       stripePriceId: stripePrice.id,
+      categoryId,
+      categoryName: categoryData.Item.name,
       createdAt,
       updatedAt,
     });
@@ -146,7 +173,7 @@ exports.PatchProduct = async (req, res) => {
       ...(imageUrl && { ":imageUrl": imageUrl }),
       ":ownerId": ownerId,
     },
-    ConditionExpression: "ownerId = :ownerId",
+    ConditionExpression: "ownerId = :ownerId", // Sadece ürün sahibi güncelleyebilir
     ReturnValues: "ALL_NEW",
   };
 
@@ -161,13 +188,12 @@ exports.PatchProduct = async (req, res) => {
 
 exports.DeleteProduct = async (req, res) => {
   const { productId } = req.params;
-
   const ownerId = req.user.sub;
 
   const params = {
     TableName: PRODUCTS_TABLE,
     Key: { productId },
-    ConditionExpression: "ownerId = :ownerId",
+    ConditionExpression: "ownerId = :ownerId", // Sadece ürün sahibi silebilir
     ExpressionAttributeValues: {
       ":ownerId": ownerId,
     },

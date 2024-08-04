@@ -2,6 +2,10 @@ const express = require("express");
 const serverless = require("serverless-http");
 const userRouter = require("./routes/usersRoute");
 const productRouter = require("./routes/productsRoute");
+const categoryRouter = require("./routes/categoryRoute");
+
+require('dotenv').config();
+
 
 const app = express();
 
@@ -30,6 +34,7 @@ app.use((req, res, next) => {
 //Routes
 app.use("/users", userRouter);
 app.use("/products", productRouter);
+app.use('/categories',categoryRouter)
 
 app.use((req, res, next) => {
   return res.status(404).json({
