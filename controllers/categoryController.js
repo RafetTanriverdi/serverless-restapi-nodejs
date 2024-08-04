@@ -1,9 +1,17 @@
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const { PutCommand, DynamoDBDocumentClient, UpdateCommand, DeleteCommand, GetCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
+const {
+  PutCommand,
+  DynamoDBDocumentClient,
+  UpdateCommand,
+  DeleteCommand,
+  GetCommand,
+  ScanCommand,
+} = require("@aws-sdk/lib-dynamodb");
 const { v4: uuidv4 } = require("uuid");
 const client = new DynamoDBClient();
 const docClient = DynamoDBDocumentClient.from(client);
 const CATEGORIES_TABLE = process.env.CATEGORIES_TABLE;
+const USERS_TABLE = process.env.USERS_TABLE;
 
 exports.CreateCategory = async (req, res) => {
   const { categoryName } = req.body;
@@ -12,11 +20,29 @@ exports.CreateCategory = async (req, res) => {
   const createdAt = new Date().toISOString();
   const updatedAt = createdAt;
 
+  // Kullanıcının sahip olduğu ownerId'yi kontrol etme
+  const userParams = {
+    TableName: USERS_TABLE,
+    Key: { userId: ownerId },
+  };
+
+  let ownerIds = [ownerId]; // Sahipler dizisi, ilk olarak mevcut kullanıcıyı içerir
+
+  try {
+    const userData = await docClient.send(new GetCommand(userParams));
+    if (userData.Item && userData.Item.ownerId) {
+      ownerIds.push(userData.Item.ownerId); // Kullanıcının sahibi olduğu ownerId'yi ekle
+    }
+  } catch (error) {
+    console.error("Error checking user's ownerId:", error);
+    return res.status(500).json({ error: "Could not check user's ownerId" });
+  }
+
   const params = {
     TableName: CATEGORIES_TABLE,
     Item: {
       categoryId,
-      ownerId,
+      ownerIds,
       categoryName,
       productCount: 0,
       createdAt,
@@ -28,7 +54,7 @@ exports.CreateCategory = async (req, res) => {
     await docClient.send(new PutCommand(params));
     res.json({
       categoryId,
-      ownerId,
+      ownerIds,
       categoryName,
       productCount: 0,
       createdAt,
@@ -51,10 +77,12 @@ exports.GetCategory = async (req, res) => {
 
   try {
     const { Item } = await docClient.send(new GetCommand(params));
-    if (Item && Item.ownerId === ownerId) {
+    if (Item && Item.ownerIds.includes(ownerId)) {
       res.json(Item);
     } else {
-      res.status(404).json({ error: 'Could not find category or access denied' });
+      res
+        .status(404)
+        .json({ error: "Could not find category or access denied" });
     }
   } catch (error) {
     console.error(error);
@@ -67,7 +95,7 @@ exports.ListCategories = async (req, res) => {
 
   const params = {
     TableName: CATEGORIES_TABLE,
-    FilterExpression: "ownerId = :ownerId",
+    FilterExpression: "contains(ownerIds, :ownerId)", // ownerIds array'inde mevcut kullanıcı var mı kontrol et
     ExpressionAttributeValues: {
       ":ownerId": ownerId,
     },
@@ -91,13 +119,13 @@ exports.UpdateCategory = async (req, res) => {
   const params = {
     TableName: CATEGORIES_TABLE,
     Key: { categoryId },
-    UpdateExpression: "SET categoryName = :categoryName, updatedAt = :updatedAt",
+    UpdateExpression:
+      "SET categoryName = :categoryName, updatedAt = :updatedAt",
     ExpressionAttributeValues: {
       ":categoryName": categoryName,
       ":updatedAt": updatedAt,
-      ":ownerId": ownerId,
     },
-    ConditionExpression: "ownerId = :ownerId", // Sadece kategori sahibi güncelleyebilir
+    ConditionExpression: "contains(ownerIds, :ownerId)", // Sadece kategori sahipleri güncelleyebilir
     ReturnValues: "ALL_NEW",
   };
 
@@ -117,7 +145,7 @@ exports.DeleteCategory = async (req, res) => {
   const params = {
     TableName: CATEGORIES_TABLE,
     Key: { categoryId },
-    ConditionExpression: "ownerId = :ownerId", // Sadece kategori sahibi silebilir
+    ConditionExpression: "contains(ownerIds, :ownerId)", // Sadece kategori sahipleri silebilir
     ExpressionAttributeValues: {
       ":ownerId": ownerId,
     },

@@ -1,9 +1,18 @@
 const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
-const { PutCommand, DynamoDBDocumentClient, UpdateCommand, DeleteCommand, GetCommand, ScanCommand } = require("@aws-sdk/lib-dynamodb");
+const {
+  PutCommand,
+  DynamoDBDocumentClient,
+  UpdateCommand,
+  DeleteCommand,
+  GetCommand,
+  ScanCommand,
+} = require("@aws-sdk/lib-dynamodb");
 const { v4: uuidv4 } = require("uuid");
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-const { uploadImageToS3 } = require('../models/s3Upload');
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
+const { uploadImageToS3 } = require("../models/s3Upload");
+const { deleteImageFromS3 } = require("../models/deleteImageFromS3");
 const PRODUCTS_TABLE = process.env.PRODUCTS_TABLE;
+const USERS_TABLE = process.env.USERS_TABLE;
 const client = new DynamoDBClient();
 const docClient = DynamoDBDocumentClient.from(client);
 
@@ -12,7 +21,7 @@ exports.ListProducts = async (req, res) => {
 
   const params = {
     TableName: PRODUCTS_TABLE,
-    FilterExpression: "ownerId = :ownerId",
+    FilterExpression: "contains(ownerIds, :ownerId)", // ownerIds array'inde mevcut kullanıcı var mı kontrol et
     ExpressionAttributeValues: {
       ":ownerId": ownerId,
     },
@@ -20,9 +29,6 @@ exports.ListProducts = async (req, res) => {
 
   try {
     const { Items } = await docClient.send(new ScanCommand(params));
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, PATCH, DELETE");
     res.json(Items);
   } catch (error) {
     console.error(error);
@@ -41,10 +47,10 @@ exports.GetProduct = async (req, res) => {
 
   try {
     const { Item } = await docClient.send(new GetCommand(params));
-    if (Item && Item.ownerId === ownerId) {
+    if (Item && Item.ownerIds.includes(ownerId)) {
       res.json(Item);
     } else {
-      res.status(404).json({ error: 'Could not find product or access denied' });
+      res.status(404).json({ error: "Could not find product or access denied" });
     }
   } catch (error) {
     console.error(error);
@@ -69,15 +75,33 @@ exports.CreateProduct = async (req, res) => {
 
   let imageUrl;
   try {
-    imageUrl = await uploadImageToS3(Buffer.from(imageBase64, 'base64'), imageMimeType);
+    imageUrl = await uploadImageToS3(Buffer.from(imageBase64, "base64"), imageMimeType);
   } catch (error) {
     return res.status(500).json({ error: "Image upload failed" });
   }
 
-  const ownerId = req.user.sub;
+  const ownerId = req.user.sub; // Ürünü oluşturan kullanıcının ID'si
   const productId = uuidv4();
   const createdAt = new Date().toISOString();
   const updatedAt = createdAt;
+
+  // Kullanıcının sahip olduğu ownerId'yi kontrol etme
+  const userParams = {
+    TableName: USERS_TABLE,
+    Key: { userId: ownerId },
+  };
+
+  let ownerIds = [ownerId]; // Sahipler dizisi, ilk olarak mevcut kullanıcıyı içerir
+
+  try {
+    const userData = await docClient.send(new GetCommand(userParams));
+    if (userData.Item && userData.Item.ownerId) {
+      ownerIds.push(userData.Item.ownerId); // Kullanıcının sahibi olduğu ownerId'yi ekle
+    }
+  } catch (error) {
+    console.error("Error checking user's ownerId:", error);
+    return res.status(500).json({ error: "Could not check user's ownerId" });
+  }
 
   try {
     const stripeProduct = await stripe.products.create({
@@ -88,7 +112,7 @@ exports.CreateProduct = async (req, res) => {
 
     const stripePrice = await stripe.prices.create({
       unit_amount: price * 100,
-      currency: 'usd',
+      currency: "usd",
       product: stripeProduct.id,
     });
 
@@ -96,7 +120,7 @@ exports.CreateProduct = async (req, res) => {
       TableName: PRODUCTS_TABLE,
       Item: {
         productId,
-        ownerId,
+        ownerIds, // Sahipler dizisi
         name,
         price,
         description,
@@ -126,7 +150,7 @@ exports.CreateProduct = async (req, res) => {
 
     res.json({
       productId,
-      ownerId,
+      ownerIds,
       name,
       price,
       description,
@@ -146,38 +170,79 @@ exports.CreateProduct = async (req, res) => {
 
 exports.PatchProduct = async (req, res) => {
   const { productId } = req.params;
-  const { name, price, description, imageBase64, imageMimeType } = req.body;
+  const {
+    name,
+    price,
+    description,
+    imageBase64,
+    imageMimeType,
+    stripeProductId,
+    active,
+    additionalOwnerIds,
+  } = req.body;
 
   const ownerId = req.user.sub;
   const updatedAt = new Date().toISOString();
 
+  // Eski resmi silip, yeni resmi yükleme işlemi
   let imageUrl;
   if (imageBase64 && imageMimeType) {
     try {
+      // Eski ürünü alalım
+      const getProductParams = {
+        TableName: PRODUCTS_TABLE,
+        Key: { productId },
+      };
+
+      const { Item } = await docClient.send(new GetCommand(getProductParams));
+
+      // Eğer eski bir resim varsa, bunu S3'ten silelim
+      if (Item && Item.imageUrl) {
+        await deleteImageFromS3(Item.imageUrl);
+      }
+
+      // Yeni resmi S3'e yükleyelim
       imageUrl = await uploadImageToS3(Buffer.from(imageBase64, 'base64'), imageMimeType);
     } catch (error) {
       return res.status(500).json({ error: "Image upload failed" });
     }
   }
 
-  const params = {
-    TableName: PRODUCTS_TABLE,
-    Key: { productId },
-    UpdateExpression: "SET #name = :name, price = :price, description = :description, updatedAt = :updatedAt" + (imageUrl ? ", imageUrl = :imageUrl" : ""),
-    ExpressionAttributeNames: { "#name": "name" },
-    ExpressionAttributeValues: {
-      ":name": name,
-      ":price": price,
-      ":description": description,
-      ":updatedAt": updatedAt,
-      ...(imageUrl && { ":imageUrl": imageUrl }),
-      ":ownerId": ownerId,
-    },
-    ConditionExpression: "ownerId = :ownerId", // Sadece ürün sahibi güncelleyebilir
-    ReturnValues: "ALL_NEW",
-  };
-
+  // Stripe ürününü güncelle
   try {
+    await stripe.products.update(stripeProductId, {
+      name,
+      description,
+      ...(imageUrl && { images: [imageUrl] }),
+      active: active !== undefined ? active : true,
+    });
+
+    const stripePrice = await stripe.prices.create({
+      unit_amount: price * 100,
+      currency: "usd",
+      product: stripeProductId,
+    });
+
+    const params = {
+      TableName: PRODUCTS_TABLE,
+      Key: { productId },
+      UpdateExpression:
+        `SET #name = :name, price = :price, description = :description, updatedAt = :updatedAt, stripePriceId = :stripePriceId, ownerIds = list_append(ownerIds, :additionalOwnerIds)` +
+        (imageUrl ? ", imageUrl = :imageUrl" : ""),
+      ExpressionAttributeNames: { "#name": "name" },
+      ExpressionAttributeValues: {
+        ":name": name,
+        ":price": price,
+        ":description": description,
+        ":updatedAt": updatedAt,
+        ":stripePriceId": stripePrice.id,
+        ":additionalOwnerIds": additionalOwnerIds || [],
+        ...(imageUrl && { ":imageUrl": imageUrl }),
+      },
+      ConditionExpression: "contains(ownerIds, :ownerId)",
+      ReturnValues: "ALL_NEW",
+    };
+
     const { Attributes } = await docClient.send(new UpdateCommand(params));
     res.json(Attributes);
   } catch (error) {
@@ -186,24 +251,64 @@ exports.PatchProduct = async (req, res) => {
   }
 };
 
+// S3'teki resmi silmek için bir yardımcı fonksiyon ekleyelim
+async function deleteImageFromS3(imageUrl) {
+  const s3Params = {
+    Bucket: process.env.S3_BUCKET_NAME,
+    Key: imageUrl.split('.amazonaws.com/')[1] // URL'den dosya yolunu çıkartır
+  };
+
+  try {
+    await s3.deleteObject(s3Params).promise();
+  } catch (error) {
+    console.error("Error deleting image from S3: ", error);
+  }
+}
+
+
 exports.DeleteProduct = async (req, res) => {
   const { productId } = req.params;
   const ownerId = req.user.sub;
 
-  const params = {
+  const getProductParams = {
     TableName: PRODUCTS_TABLE,
     Key: { productId },
-    ConditionExpression: "ownerId = :ownerId", // Sadece ürün sahibi silebilir
-    ExpressionAttributeValues: {
-      ":ownerId": ownerId,
-    },
   };
 
   try {
-    await docClient.send(new DeleteCommand(params));
-    res.json({ message: "Product deleted successfully" });
+    // İlk olarak ürünü alalım
+    const { Item } = await docClient.send(new GetCommand(getProductParams));
+    if (Item && Item.ownerIds.includes(ownerId)) {
+      // Stripe'dan ürünü sil
+      await stripe.products.del(Item.stripeProductId);
+
+      // S3'den görüntüyü sil
+      if (Item.imageUrl) {
+        try {
+          await deleteImageFromS3(Item.imageUrl);
+        } catch (error) {
+          console.error("Error deleting image from S3:", error);
+          return res.status(500).json({ error: "Could not delete image from S3" });
+        }
+      }
+
+      const params = {
+        TableName: PRODUCTS_TABLE,
+        Key: { productId },
+        ConditionExpression: "contains(ownerIds, :ownerId)", // Sadece ürün sahibi silebilir
+        ExpressionAttributeValues: {
+          ":ownerId": ownerId,
+        },
+      };
+
+      await docClient.send(new DeleteCommand(params));
+      res.json({ message: "Product deleted successfully" });
+    } else {
+      res.status(404).json({ error: "Could not find product or access denied" });
+    }
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Could not delete product" });
   }
 };
+

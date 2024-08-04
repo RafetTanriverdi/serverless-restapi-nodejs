@@ -2,8 +2,9 @@ const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const {
   AdminUpdateUserAttributesCommand,
   AdminDeleteUserCommand,
+  AdminCreateUserCommand,
+  CognitoIdentityProviderClient,
 } = require("@aws-sdk/client-cognito-identity-provider");
-
 const {
   PutCommand,
   DynamoDBDocumentClient,
@@ -13,10 +14,6 @@ const {
   ScanCommand,
   QueryCommand,
 } = require("@aws-sdk/lib-dynamodb");
-const {
-  CognitoIdentityProviderClient,
-  AdminCreateUserCommand,
-} = require("@aws-sdk/client-cognito-identity-provider");
 
 const USERS_TABLE = process.env.USERS_TABLE;
 const USER_POOL_ID = process.env.USER_POOL_ID;
@@ -64,9 +61,7 @@ exports.GetUser = async (req, res) => {
         res.status(403).json({ error: "Access denied" });
       }
     } else {
-      res
-        .status(404)
-        .json({ error: 'Could not find user with provided "userId"' });
+      res.status(404).json({ error: 'Could not find user with provided "userId"' });
     }
   } catch (error) {
     console.error(error);
@@ -103,9 +98,7 @@ exports.CreateUser = async (req, res) => {
   try {
     const { Items } = await docClient.send(new QueryCommand(queryParams));
     if (Items.length > 0) {
-      return res
-        .status(400)
-        .json({ error: "A user with this email already exists" });
+      return res.status(400).json({ error: "A user with this email already exists" });
     }
   } catch (error) {
     console.error(error);
@@ -143,9 +136,7 @@ exports.CreateUser = async (req, res) => {
 
   let cognitoUser;
   try {
-    cognitoUser = await cognitoClient.send(
-      new AdminCreateUserCommand(cognitoParams)
-    );
+    cognitoUser = await cognitoClient.send(new AdminCreateUserCommand(cognitoParams));
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: "Could not create user in Cognito" });
@@ -153,9 +144,7 @@ exports.CreateUser = async (req, res) => {
 
   // Cognito'dan dönen `sub`'ı kullanarak DynamoDB'de kullanıcı oluştur
   const ownerId = req.user.sub;
-  const userId = cognitoUser.User.Attributes.find(
-    (attr) => attr.Name === "sub"
-  ).Value;
+  const userId = cognitoUser.User.Attributes.find((attr) => attr.Name === "sub").Value;
   const createdAt = new Date().toISOString();
   const updatedAt = createdAt;
 
@@ -196,100 +185,97 @@ exports.CreateUser = async (req, res) => {
 // Kullanıcı bilgilerini güncellemek için
 exports.PatchUser = async (req, res) => {
   const { userId } = req.params;
-  const requesterId = req.user.sub;
-
-  if (userId !== requesterId) {
-    return res.status(403).json({ error: "Access denied" });
-  }
-
   const { name, role, permissions, phoneNumber } = req.body;
-  if (typeof name !== "string") {
-    return res.status(400).json({ error: '"name" must be a string' });
-  } else if (typeof role !== "string") {
-    return res.status(400).json({ error: '"role" must be a string' });
-  } else if (!Array.isArray(permissions)) {
-    return res.status(400).json({ error: '"permissions" must be an array' });
-  } else if (typeof phoneNumber !== "string") {
-    return res.status(400).json({ error: '"phoneNumber" must be a string' });
-  }
 
-  // Cognito'da attribute güncelleme
-  const cognitoParams = {
-    UserPoolId: USER_POOL_ID,
-    Username: req.user.username, // Mevcut kullanıcı adı (username)
-    UserAttributes: [
-      {
-        Name: "custom:phone_number",
-        Value: phoneNumber,
-      },
-      {
-        Name: "custom:role",
-        Value: role,
-      },
-      {
-        Name: "custom:permissions",
-        Value: permissions.join(","),
-      },
-    ],
-  };
-
-  try {
-    await cognitoClient.send(
-      new AdminUpdateUserAttributesCommand(cognitoParams)
-    );
-  } catch (error) {
-    console.error("Cognito update error:", error);
-    return res
-      .status(500)
-      .json({ error: "Could not update user attributes in Cognito" });
-  }
-
-  const dynamoParams = {
+  // Geçerli kullanıcının bilgileri alınıyor
+  const getUserParams = {
     TableName: USERS_TABLE,
     Key: { userId },
-    UpdateExpression:
-      "SET #name = :name, role = :role, permissions = :permissions, phoneNumber = :phoneNumber, updatedAt = :updatedAt",
-    ExpressionAttributeNames: { "#name": "name" },
-    ExpressionAttributeValues: {
-      ":name": name,
-      ":role": role,
-      ":permissions": permissions,
-      ":phoneNumber": phoneNumber,
-      ":updatedAt": new Date().toISOString(),
-    },
-    ConditionExpression: "ownerId = :ownerId", // Sadece kullanıcı sahibi güncelleyebilir
-    ReturnValues: "ALL_NEW",
   };
 
   try {
-    const { Attributes } = await docClient.send(
-      new UpdateCommand(dynamoParams)
-    );
+    const { Item } = await docClient.send(new GetCommand(getUserParams));
+    if (!Item || (Item.ownerId !== req.user.sub && Item.userId !== req.user.sub)) {
+      return res.status(403).json({ error: "Access denied" });
+    }
+
+    // Cognito'da attribute güncelleme
+    const cognitoParams = {
+      UserPoolId: USER_POOL_ID,
+      Username: Item.email,
+      UserAttributes: [
+        {
+          Name: "name",
+          Value: name,
+        },
+        {
+          Name: "custom:phone_number",
+          Value: phoneNumber,
+        },
+        {
+          Name: "custom:role",
+          Value: role,
+        },
+        {
+          Name: "custom:permissions",
+          Value: permissions.join(","),  // Converting array to comma-separated string
+        },
+      ],
+    };
+
+    await cognitoClient.send(new AdminUpdateUserAttributesCommand(cognitoParams));
+
+    // DynamoDB'de attribute güncelleme
+    const dynamoParams = {
+      TableName: USERS_TABLE,
+      Key: { userId },
+      UpdateExpression: "SET #name = :name, #role = :role, #permissions = :permissions, #phoneNumber = :phoneNumber, updatedAt = :updatedAt",
+      ExpressionAttributeNames: { 
+        "#name": "name",
+        "#role": "role",
+        "#permissions": "permissions", // Using alias for permissions
+        "#phoneNumber": "phoneNumber" // Using alias for phoneNumber
+      },
+      ExpressionAttributeValues: {
+        ":name": name,
+        ":role": role,
+        ":permissions": permissions,
+        ":phoneNumber": phoneNumber,
+        ":updatedAt": new Date().toISOString(),
+        ":ownerId": req.user.sub
+      },
+      ConditionExpression: "ownerId = :ownerId", // Sadece kullanıcı sahibi güncelleyebilir
+      ReturnValues: "ALL_NEW",
+    };
+
+    const { Attributes } = await docClient.send(new UpdateCommand(dynamoParams));
     res.json(Attributes);
   } catch (error) {
-    console.error(error);
+    console.error("Update error:", error);
     res.status(500).json({ error: "Could not update user" });
   }
 };
+
+
+
 // Kullanıcıyı silmek için
 exports.DeleteUser = async (req, res) => {
   const { userId } = req.params;
-  const requesterId = req.user.sub;
 
   // Silinmek istenen kullanıcı kendi mi yoksa sahibi mi kontrol ediliyor
-  const params = {
+  const getUserParams = {
     TableName: USERS_TABLE,
     Key: { userId },
   };
 
   try {
-    const { Item } = await docClient.send(new GetCommand(params));
-    if (!Item || (Item.ownerId !== requesterId && Item.userId !== requesterId)) {
+    const { Item } = await docClient.send(new GetCommand(getUserParams));
+    if (!Item || (Item.ownerId !== req.user.sub && Item.userId !== req.user.sub)) {
       return res.status(403).json({ error: "Access denied" });
     }
 
     // DynamoDB'deki kullanıcıyı sil
-    await docClient.send(new DeleteCommand(params));
+    await docClient.send(new DeleteCommand(getUserParams));
 
     // Cognito'daki kullanıcıyı sil
     const cognitoParams = {
