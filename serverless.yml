@@ -48,9 +48,9 @@ provider:
     PRODUCTS_TABLE: ${self:custom.productsTableName}
     CATEGORIES_TABLE: ${self:custom.categoriesTableName}
     REGION: us-east-1
-    USER_POOL_ID: us-east-1_aGkZLpxYC
-    CLIENT_ID: 13ifndkmoo2onltce9bqtq6j38
-    ACCOUNT_ID: 895476881817
+    USER_POOL_ID: ${env:USER_POOL_ID}
+    CLIENT_ID: ${env:CLIENT_ID}
+    ACCOUNT_ID: ${env:ACCOUNT_ID}
     STRIPE_SECRET_KEY: ${env:STRIPE_SECRET_KEY}
     S3_BUCKET_NAME: ${self:custom.s3BucketName}
 

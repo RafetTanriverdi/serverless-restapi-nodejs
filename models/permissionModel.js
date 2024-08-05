@@ -18,6 +18,15 @@ exports.permissionsList = [
         "Category:Delete",
       ],
     },
+    {
+      name: "Users",
+      permissions: [
+        "User:Create",
+        "User:Read",
+        "User:Update",
+        "User:Delete",
+      ],
+    },
   ];
   
   exports.getPermissionsByName = (name) => {

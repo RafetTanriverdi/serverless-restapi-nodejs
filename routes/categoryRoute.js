@@ -2,6 +2,7 @@ const express = require("express");
 const categoryController = require("../controllers/categoryController");
 const authenticateToken = require("../middleware/authenticateToken");
 const { getPermissionsByName } = require("../models/permissionModel");
+const authMiddleware = require("../middleware/authorazitionMiddleware");
 const router = express.Router();
 
 const categoryReadPermissions = getPermissionsByName("Categories").filter(

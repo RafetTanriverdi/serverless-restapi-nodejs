@@ -1,4 +1,3 @@
-// routes/productRoutes.js
 const express = require("express");
 const productsController = require("../controllers/productsController");
 const authenticateToken = require("../middleware/authenticateToken");
