@@ -24,6 +24,7 @@ provider:
             - s3:PutObject
             - s3:GetObject
             - s3:ListBucket
+            - s3:DeleteObject
           Resource:
             - Fn::GetAtt: [UsersTable, Arn]
             - Fn::GetAtt: [ProductsTable, Arn]
@@ -47,8 +48,8 @@ provider:
     PRODUCTS_TABLE: ${self:custom.productsTableName}
     CATEGORIES_TABLE: ${self:custom.categoriesTableName}
     REGION: us-east-1
-    USER_POOL_ID: us-east-1_Dj3jiEcMk
-    CLIENT_ID: 28hs6lohmppetp6pgm6h3teu8e
+    USER_POOL_ID: us-east-1_aGkZLpxYC
+    CLIENT_ID: 13ifndkmoo2onltce9bqtq6j38
     ACCOUNT_ID: 895476881817
     STRIPE_SECRET_KEY: ${env:STRIPE_SECRET_KEY}
     S3_BUCKET_NAME: ${self:custom.s3BucketName}

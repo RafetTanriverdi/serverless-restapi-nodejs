@@ -1,7 +1,7 @@
 const AWS = require("aws-sdk");
 const s3 = new AWS.S3();
 
-exports.deleteImageFromS3 = async (imageUrl) => {
+exports.deleteImageS3 = async (imageUrl) => {
   const params = {
     Bucket: process.env.S3_BUCKET_NAME, // S3 bucket adını .env dosyasından alın
     Key: imageUrl.split('/').pop(), // Dosya adını imageUrl'den çıkar
@@ -14,3 +14,4 @@ exports.deleteImageFromS3 = async (imageUrl) => {
     throw error;
   }
 };
+

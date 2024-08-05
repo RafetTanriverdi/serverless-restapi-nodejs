@@ -10,18 +10,24 @@ const {
 const { v4: uuidv4 } = require("uuid");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const { uploadImageToS3 } = require("../models/s3Upload");
-const { deleteImageFromS3 } = require("../models/deleteImageFromS3");
+const { deleteImageS3 } = require("../models/deleteImageFromS3");
+
 const PRODUCTS_TABLE = process.env.PRODUCTS_TABLE;
 const USERS_TABLE = process.env.USERS_TABLE;
 const client = new DynamoDBClient();
 const docClient = DynamoDBDocumentClient.from(client);
 
 exports.ListProducts = async (req, res) => {
-  const ownerId = req.user.sub; // Mevcut kullanıcı kimliği
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, PATCH, DELETE");
+  const ownerId = req.user.sub;
+
+  
 
   const params = {
     TableName: PRODUCTS_TABLE,
-    FilterExpression: "contains(ownerIds, :ownerId)", // ownerIds array'inde mevcut kullanıcı var mı kontrol et
+    FilterExpression: "contains(ownerIds, :ownerId)",
     ExpressionAttributeValues: {
       ":ownerId": ownerId,
     },
@@ -178,7 +184,6 @@ exports.PatchProduct = async (req, res) => {
     imageMimeType,
     stripeProductId,
     active,
-    additionalOwnerIds,
   } = req.body;
 
   const ownerId = req.user.sub;
@@ -198,7 +203,7 @@ exports.PatchProduct = async (req, res) => {
 
       // Eğer eski bir resim varsa, bunu S3'ten silelim
       if (Item && Item.imageUrl) {
-        await deleteImageFromS3(Item.imageUrl);
+        await deleteImageS3(Item.imageUrl);
       }
 
       // Yeni resmi S3'e yükleyelim
@@ -227,7 +232,7 @@ exports.PatchProduct = async (req, res) => {
       TableName: PRODUCTS_TABLE,
       Key: { productId },
       UpdateExpression:
-        `SET #name = :name, price = :price, description = :description, updatedAt = :updatedAt, stripePriceId = :stripePriceId, ownerIds = list_append(ownerIds, :additionalOwnerIds)` +
+        `SET #name = :name, price = :price, description = :description, updatedAt = :updatedAt, stripePriceId = :stripePriceId` +
         (imageUrl ? ", imageUrl = :imageUrl" : ""),
       ExpressionAttributeNames: { "#name": "name" },
       ExpressionAttributeValues: {
@@ -236,7 +241,6 @@ exports.PatchProduct = async (req, res) => {
         ":description": description,
         ":updatedAt": updatedAt,
         ":stripePriceId": stripePrice.id,
-        ":additionalOwnerIds": additionalOwnerIds || [],
         ...(imageUrl && { ":imageUrl": imageUrl }),
       },
       ConditionExpression: "contains(ownerIds, :ownerId)",
@@ -250,21 +254,6 @@ exports.PatchProduct = async (req, res) => {
     res.status(500).json({ error: "Could not update product" });
   }
 };
-
-// S3'teki resmi silmek için bir yardımcı fonksiyon ekleyelim
-async function deleteImageFromS3(imageUrl) {
-  const s3Params = {
-    Bucket: process.env.S3_BUCKET_NAME,
-    Key: imageUrl.split('.amazonaws.com/')[1] // URL'den dosya yolunu çıkartır
-  };
-
-  try {
-    await s3.deleteObject(s3Params).promise();
-  } catch (error) {
-    console.error("Error deleting image from S3: ", error);
-  }
-}
-
 
 exports.DeleteProduct = async (req, res) => {
   const { productId } = req.params;
@@ -285,7 +274,7 @@ exports.DeleteProduct = async (req, res) => {
       // S3'den görüntüyü sil
       if (Item.imageUrl) {
         try {
-          await deleteImageFromS3(Item.imageUrl);
+          await deleteImageS3(Item.imageUrl);
         } catch (error) {
           console.error("Error deleting image from S3:", error);
           return res.status(500).json({ error: "Could not delete image from S3" });
@@ -295,7 +284,7 @@ exports.DeleteProduct = async (req, res) => {
       const params = {
         TableName: PRODUCTS_TABLE,
         Key: { productId },
-        ConditionExpression: "contains(ownerIds, :ownerId)", // Sadece ürün sahibi silebilir
+        ConditionExpression: "contains(ownerIds, :ownerId)",
         ExpressionAttributeValues: {
           ":ownerId": ownerId,
         },
@@ -311,4 +300,3 @@ exports.DeleteProduct = async (req, res) => {
     res.status(500).json({ error: "Could not delete product" });
   }
 };
-

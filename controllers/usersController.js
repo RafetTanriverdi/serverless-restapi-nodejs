@@ -24,6 +24,10 @@ const cognitoClient = new CognitoIdentityProviderClient();
 
 // Sadece kendi eklediğiniz kullanıcıları listelemek için
 exports.ListUsers = async (req, res) => {
+
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, PATCH, DELETE");
   const params = {
     TableName: USERS_TABLE,
     FilterExpression: "ownerId = :ownerId",
