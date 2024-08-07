@@ -37,15 +37,17 @@ exports.ListUsers = async (req, res) => {
   };
 
   try {
+   
     const { Items } = await docClient.send(new ScanCommand(params));
-    res.json(Items);
+    const filteredItems = Items.filter((item) => item.ownerId !== req.user.sub);
+    res.json(filteredItems);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: "Could not retrieve users" });
   }
 };
 
-// Sadece kendi bilgilerini veya kendi eklediğiniz kullanıcıları almak için
+
 exports.GetUser = async (req, res) => {
   const { userId } = req.params;
   const requesterId = req.user.sub;
