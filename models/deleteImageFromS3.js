@@ -3,8 +3,8 @@ const s3 = new AWS.S3();
 
 exports.deleteImageS3 = async (imageUrl) => {
   const params = {
-    Bucket: process.env.S3_BUCKET_NAME, // S3 bucket adını .env dosyasından alın
-    Key: imageUrl.split('/').pop(), // Dosya adını imageUrl'den çıkar
+    Bucket: process.env.S3_BUCKET_NAME,
+    Key: imageUrl.split('/').pop(), 
   };
 
   try {

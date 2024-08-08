@@ -18,7 +18,7 @@ const verifyToken = (token) => {
       token,
       getKey,
       {
-        audience: process.env.CLIENT_ID, // Client ID'niz
+        audience: process.env.CLIENT_ID, 
         issuer: `https://cognito-idp.${process.env.REGION}.amazonaws.com/${process.env.USER_POOL_ID}`,
         algorithms: ["RS256"],
       },

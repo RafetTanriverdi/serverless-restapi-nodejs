@@ -10,6 +10,7 @@ const {
 const { v4: uuidv4 } = require("uuid");
 const client = new DynamoDBClient();
 const docClient = DynamoDBDocumentClient.from(client);
+
 const CATEGORIES_TABLE = process.env.CATEGORIES_TABLE;
 const USERS_TABLE = process.env.USERS_TABLE;
 
@@ -20,22 +21,28 @@ exports.CreateCategory = async (req, res) => {
   const createdAt = new Date().toISOString();
   const updatedAt = createdAt;
 
-  // Kullanıcının sahip olduğu ownerId'yi kontrol etme
   const userParams = {
     TableName: USERS_TABLE,
     Key: { userId: ownerId },
   };
 
-  let ownerIds = [ownerId]; // Sahipler dizisi, ilk olarak mevcut kullanıcıyı içerir
+  let ownerName;
+  let ownerIds = [ownerId]; 
 
   try {
     const userData = await docClient.send(new GetCommand(userParams));
-    if (userData.Item && userData.Item.ownerId) {
-      ownerIds.push(userData.Item.ownerId); // Kullanıcının sahibi olduğu ownerId'yi ekle
+    if (userData.Item) {
+      ownerName = userData.Item.name; 
+      
+      if (userData.Item.ownerId && userData.Item.ownerId !== ownerId) {
+        ownerIds.push(userData.Item.ownerId);
+      }
+    } else {
+      return res.status(404).json({ message: "User not found" });
     }
   } catch (error) {
-    console.error("Error checking user's ownerId:", error);
-    return res.status(500).json({ error: "Could not check user's ownerId" });
+    console.error("Error fetching user data:", error);
+    return res.status(500).json({ message: "Could not fetch user data" });
   }
 
   const params = {
@@ -43,6 +50,7 @@ exports.CreateCategory = async (req, res) => {
     Item: {
       categoryId,
       ownerIds,
+      ownerName,
       categoryName,
       productCount: 0,
       createdAt,
@@ -55,6 +63,7 @@ exports.CreateCategory = async (req, res) => {
     res.json({
       categoryId,
       ownerIds,
+      ownerName, 
       categoryName,
       productCount: 0,
       createdAt,
@@ -62,9 +71,11 @@ exports.CreateCategory = async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating category: ", error);
-    res.status(500).json({ error: "Could not create category" });
+    res.status(500).json({ message: "Could not create category" });
   }
 };
+
+
 
 exports.GetCategory = async (req, res) => {
   const { categoryId } = req.params;
@@ -82,11 +93,11 @@ exports.GetCategory = async (req, res) => {
     } else {
       res
         .status(404)
-        .json({ error: "Could not find category or access denied" });
+        .json({ message: "Could not find category or access denied" });
     }
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Could not retrieve category" });
+    res.status(500).json({ message: "Could not retrieve category" });
   }
 };
 
@@ -99,7 +110,7 @@ exports.ListCategories = async (req, res) => {
 
   const params = {
     TableName: CATEGORIES_TABLE,
-    FilterExpression: "contains(ownerIds, :ownerId)", // ownerIds array'inde mevcut kullanıcı var mı kontrol et
+    FilterExpression: "contains(ownerIds, :ownerId)", 
     ExpressionAttributeValues: {
       ":ownerId": ownerId,
     },
@@ -110,7 +121,7 @@ exports.ListCategories = async (req, res) => {
     res.json(Items);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Could not retrieve categories" });
+    res.status(500).json({ message: "Could not retrieve categories" });
   }
 };
 
@@ -120,46 +131,113 @@ exports.UpdateCategory = async (req, res) => {
   const ownerId = req.user.sub;
   const updatedAt = new Date().toISOString();
 
-  const params = {
+
+  const getCategoryParams = {
     TableName: CATEGORIES_TABLE,
     Key: { categoryId },
-    UpdateExpression:
-      "SET categoryName = :categoryName, updatedAt = :updatedAt",
-    ExpressionAttributeValues: {
-      ":categoryName": categoryName,
-      ":updatedAt": updatedAt,
-    },
-    ConditionExpression: "contains(ownerIds, :ownerId)", // Sadece kategori sahipleri güncelleyebilir
-    ReturnValues: "ALL_NEW",
   };
 
   try {
-    const { Attributes } = await docClient.send(new UpdateCommand(params));
+    const categoryData = await docClient.send(new GetCommand(getCategoryParams));
+    
+    if (!categoryData.Item) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    if (!categoryData.Item.ownerIds || !categoryData.Item.ownerIds.includes(ownerId)) {
+      return res.status(403).json({ message: "Access denied or ownerIds missing" });
+    }
+
+
+    const updateCategoryParams = {
+      TableName: CATEGORIES_TABLE,
+      Key: { categoryId },
+      UpdateExpression: "SET categoryName = :categoryName, updatedAt = :updatedAt",
+      ExpressionAttributeValues: {
+        ":categoryName": categoryName,
+        ":updatedAt": updatedAt,
+      },
+      ReturnValues: "ALL_NEW",
+    };
+
+    const { Attributes } = await docClient.send(new UpdateCommand(updateCategoryParams));
+
+  
+    const updateProductParams = {
+      TableName: PRODUCTS_TABLE,
+      IndexName: 'categoryId-index', 
+      KeyConditionExpression: 'categoryId = :categoryId',
+      ExpressionAttributeValues: {
+        ':categoryId': categoryId,
+      },
+    };
+
+    const { Items: products } = await docClient.send(new QueryCommand(updateProductParams));
+
+    for (const product of products) {
+      const updateProductCategoryNameParams = {
+        TableName: PRODUCTS_TABLE,
+        Key: { productId: product.productId },
+        UpdateExpression: "SET categoryName = :categoryName",
+        ExpressionAttributeValues: {
+          ":categoryName": categoryName,
+        },
+      };
+
+      await docClient.send(new UpdateCommand(updateProductCategoryNameParams));
+    }
+
     res.json(Attributes);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Could not update category" });
+    console.error("Error updating category and associated products:", error);
+    res.status(500).json({ message: "Could not update category or associated products" });
   }
 };
+
 
 exports.DeleteCategory = async (req, res) => {
   const { categoryId } = req.params;
   const ownerId = req.user.sub;
 
-  const params = {
+
+  const getCategoryParams = {
     TableName: CATEGORIES_TABLE,
     Key: { categoryId },
-    ConditionExpression: "contains(ownerIds, :ownerId)", // Sadece kategori sahipleri silebilir
-    ExpressionAttributeValues: {
-      ":ownerId": ownerId,
-    },
   };
 
   try {
-    await docClient.send(new DeleteCommand(params));
+    const { Item } = await docClient.send(new GetCommand(getCategoryParams));
+
+    if (!Item) {
+      return res.status(404).json({ message: "Category not found" });
+    }
+
+    if (!Item.ownerIds || !Item.ownerIds.includes(ownerId)) {
+      return res.status(403).json({ message: "Access denied or ownerIds missing" });
+    }
+
+    if (Item.productCount > 0) {
+      return res.status(400).json({ message: "Cannot delete category: There are products linked to this category. Please delete the products first." });
+    }
+
+
+    const deleteParams = {
+      TableName: CATEGORIES_TABLE,
+      Key: { categoryId },
+      ConditionExpression: "contains(ownerIds, :ownerId)", 
+      ExpressionAttributeValues: {
+        ":ownerId": ownerId,
+      },
+    };
+
+    await docClient.send(new DeleteCommand(deleteParams));
     res.json({ message: "Category deleted successfully" });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Could not delete category" });
+    if (error.name === 'ConditionalCheckFailedException') {
+      res.status(400).json({ message: "Failed to delete category: Condition check failed" });
+    } else {
+      console.error("Error deleting category:", error);
+      res.status(500).json({ message: "Could not delete category" });
+    }
   }
 };

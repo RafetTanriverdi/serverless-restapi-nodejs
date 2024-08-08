@@ -1,4 +1,4 @@
-// models/permissionModel.js
+
 exports.permissionsList = [
     {
       name: "Products",

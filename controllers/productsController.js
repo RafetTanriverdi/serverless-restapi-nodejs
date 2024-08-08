@@ -35,10 +35,9 @@ exports.ListProducts = async (req, res) => {
 
   const params = {
     TableName: PRODUCTS_TABLE,
-    FilterExpression: "contains(ownerIds, :ownerId) AND active = :active",
+    FilterExpression: "contains(ownerIds, :ownerId)",
     ExpressionAttributeValues: {
       ":ownerId": ownerId,
-      ":active": true,
     },
   };
 
@@ -47,7 +46,7 @@ exports.ListProducts = async (req, res) => {
     res.json(Items);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Could not retrieve products" });
+    res.status(500).json({ message: "Could not retrieve products" });
   }
 };
 
@@ -67,17 +66,17 @@ exports.GetProduct = async (req, res) => {
     } else {
       res
         .status(404)
-        .json({ error: "Could not find product or access denied" });
+        .json({ message: "Could not find product or access denied" });
     }
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: "Could not retrieve product" });
+    res.status(500).json({ message: "Could not retrieve product" });
   }
 };
 
 exports.CreateProduct = async (req, res) => {
   const {
-    name,
+    productName,
     price,
     description,
     imageBase64,
@@ -107,7 +106,7 @@ exports.CreateProduct = async (req, res) => {
     const categoryData = await docClient.send(new GetCommand(categoryParams));
 
     if (!categoryData.Item) {
-      return res.status(400).json({ error: "Invalid categoryId" });
+      return res.status(400).json({ message: "Invalid categoryId" });
     }
     const categoryName = categoryData.Item.categoryName;
 
@@ -119,7 +118,7 @@ exports.CreateProduct = async (req, res) => {
       );
     } catch (error) {
       console.error("Image upload failed:", error);
-      return res.status(500).json({ error: "Image upload failed" });
+      return res.status(500).json({ message: "Image upload failed" });
     }
 
     const ownerId = req.user.sub;
@@ -130,7 +129,7 @@ exports.CreateProduct = async (req, res) => {
     let ownerIds = [ownerId];
 
     const stripeProduct = await stripe.products.create({
-      name,
+      name: productName, 
       description,
       images: [imageUrl],
       metadata: {
@@ -149,15 +148,15 @@ exports.CreateProduct = async (req, res) => {
       Item: {
         productId,
         ownerIds,
-        ownerName, 
-        name,
+        ownerName,
+        productName, 
         price,
         description,
         imageUrl,
         stripeProductId: stripeProduct.id,
         stripePriceId: stripePrice.id,
         categoryId,
-        categoryName, 
+        categoryName,
         createdAt,
         updatedAt,
         active,
@@ -181,15 +180,15 @@ exports.CreateProduct = async (req, res) => {
     res.json({
       productId,
       ownerIds,
-      ownerName, // Added owner name
-      name,
+      ownerName,
+      productName,
       price,
       description,
       imageUrl,
       stripeProductId: stripeProduct.id,
       stripePriceId: stripePrice.id,
       categoryId,
-      categoryName, // Added category name
+      categoryName,
       createdAt,
       updatedAt,
       active,
@@ -197,19 +196,19 @@ exports.CreateProduct = async (req, res) => {
     });
   } catch (error) {
     console.error("Error creating product: ", error);
-    res.status(500).json({ error: "Could not create product" });
+    res.status(500).json({ message: "Could not create product" });
   }
 };
 
 exports.PatchProduct = async (req, res) => {
   const { productId } = req.params;
   const {
-    name,
+    productName,
     price,
     description,
     imageBase64,
     imageMimeType,
-    stripeProductId,
+    categoryId,
     active,
     stock,
   } = req.body;
@@ -218,32 +217,64 @@ exports.PatchProduct = async (req, res) => {
   const updatedAt = new Date().toISOString();
 
   let imageUrl;
-  if (imageBase64 && imageMimeType) {
-    try {
-      const getProductParams = {
-        TableName: PRODUCTS_TABLE,
-        Key: { productId },
-      };
+  let stripeProductId;
 
-      const { Item } = await docClient.send(new GetCommand(getProductParams));
+  try {
+    const getProductParams = {
+      TableName: PRODUCTS_TABLE,
+      Key: { productId },
+    };
 
-      if (Item && Item.imageUrl) {
-        await deleteImageS3(Item.imageUrl);
+    const { Item } = await docClient.send(new GetCommand(getProductParams));
+
+    if (!Item) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    stripeProductId = Item.stripeProductId;
+    imageUrl = Item.imageUrl;
+
+    if (imageBase64 && imageMimeType) {
+      try {
+        if (imageUrl) {
+          await deleteImageS3(imageUrl);
+        }
+        imageUrl = await uploadImageToS3(
+          Buffer.from(imageBase64, "base64"),
+          imageMimeType
+        );
+      } catch (error) {
+        console.error("Image upload failed:", error);
+        return res.status(500).json({ message: "Image upload failed" });
       }
+    }
+  } catch (error) {
+    console.error("Error fetching product:", error);
+    return res.status(500).json({ message: "Error fetching product" });
+  }
 
-      imageUrl = await uploadImageToS3(
-        Buffer.from(imageBase64, "base64"),
-        imageMimeType
-      );
+  let categoryName;
+  if (categoryId) {
+    try {
+      const categoryParams = {
+        TableName: process.env.CATEGORIES_TABLE,
+        Key: { categoryId },
+      };
+      const categoryData = await docClient.send(new GetCommand(categoryParams));
+
+      if (!categoryData.Item) {
+        return res.status(400).json({ message: "Invalid categoryId" });
+      }
+      categoryName = categoryData.Item.categoryName;
     } catch (error) {
-      return res.status(500).json({ error: "Image upload failed" });
+      console.error("Error fetching category:", error);
+      return res.status(500).json({ message: "Error fetching category" });
     }
   }
 
   try {
-    // Update the Stripe product
     await stripe.products.update(stripeProductId, {
-      name,
+      name: productName, 
       description,
       ...(imageUrl && { images: [imageUrl] }),
       active: active !== undefined ? active : true,
@@ -251,40 +282,46 @@ exports.PatchProduct = async (req, res) => {
         stock: stock.toString(),
       },
     });
+  } catch (error) {
+    console.error("Stripe product update failed:", error);
+    return res.status(500).json({ message: `Could not update product in Stripe: ${error.message}` });
+  }
 
-    // Delete old prices in Stripe
+  try {
     const existingPrices = await stripe.prices.list({
       product: stripeProductId,
     });
 
     for (const existingPrice of existingPrices.data) {
-      await stripe.prices.del(existingPrice.id);
+      await stripe.prices.update(existingPrice.id, { active: false });
     }
 
-    // Create new price in Stripe
     const stripePrice = await stripe.prices.create({
       unit_amount: price * 100,
       currency: "usd",
       product: stripeProductId,
     });
 
-    // Update product in DynamoDB
     const params = {
       TableName: PRODUCTS_TABLE,
       Key: { productId },
       UpdateExpression:
-        `SET #name = :name, price = :price, description = :description, updatedAt = :updatedAt, stripePriceId = :stripePriceId, stock = :stock` +
+        `SET #productName = :productName, price = :price, description = :description, updatedAt = :updatedAt, 
+         stripePriceId = :stripePriceId, stock = :stock` +
         (imageUrl ? ", imageUrl = :imageUrl" : "") +
+        (categoryId ? ", categoryId = :categoryId, categoryName = :categoryName" : "") +
         (active !== undefined ? ", active = :active" : ""),
-      ExpressionAttributeNames: { "#name": "name" },
+      ExpressionAttributeNames: { "#productName": "productName" }, 
       ExpressionAttributeValues: {
-        ":name": name,
+        ":productName": productName, 
         ":price": price,
         ":description": description,
         ":updatedAt": updatedAt,
         ":stripePriceId": stripePrice.id,
         ":stock": stock,
+        ":ownerId": ownerId,
         ...(imageUrl && { ":imageUrl": imageUrl }),
+        ...(categoryId && { ":categoryId": categoryId, ":categoryName": categoryName }),
         ...(active !== undefined && { ":active": active }),
       },
       ConditionExpression: "contains(ownerIds, :ownerId)",
@@ -294,8 +331,8 @@ exports.PatchProduct = async (req, res) => {
     const { Attributes } = await docClient.send(new UpdateCommand(params));
     res.json(Attributes);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Could not update product" });
+    console.error("DynamoDB update failed:", error);
+    return res.status(500).json({ message: `Could not update product in DynamoDB: ${error.message}` });
   }
 };
 
@@ -313,7 +350,6 @@ exports.DeleteProduct = async (req, res) => {
     console.log("Retrieved Item:", Item);
 
     if (Item && Item.ownerIds.includes(ownerId)) {
-      // Mark product as inactive in Stripe
       try {
         await stripe.products.update(Item.stripeProductId, {
           active: false,
@@ -326,10 +362,29 @@ exports.DeleteProduct = async (req, res) => {
         console.error("Error marking product as inactive in Stripe:", error);
         return res
           .status(500)
-          .json({ error: "Could not update product in Stripe" });
+          .json({ message: "Could not update product in Stripe" });
       }
 
-      // Delete the product from DynamoDB
+      const updateCategoryParams = {
+        TableName: process.env.CATEGORIES_TABLE,
+        Key: { categoryId: Item.categoryId },
+        UpdateExpression: "SET productCount = productCount - :dec",
+        ConditionExpression: "productCount > :zero",
+        ExpressionAttributeValues: {
+          ":dec": 1,
+          ":zero": 0,
+        },
+        ReturnValues: "UPDATED_NEW",
+      };
+
+      try {
+        await docClient.send(new UpdateCommand(updateCategoryParams));
+        console.log("Category product count decremented");
+      } catch (error) {
+        console.error("Error updating category product count:", error);
+        return res.status(500).json({ message: "Could not update category product count" });
+      }
+
       const deleteParams = {
         TableName: PRODUCTS_TABLE,
         Key: { productId },
@@ -346,15 +401,15 @@ exports.DeleteProduct = async (req, res) => {
         console.error("Error deleting product from DynamoDB:", error);
         res
           .status(500)
-          .json({ error: "Could not delete product from database" });
+          .json({ message: "Could not delete product from database" });
       }
     } else {
       res
         .status(404)
-        .json({ error: "Could not find product or access denied" });
+        .json({ message: "Could not find product or access denied" });
     }
   } catch (error) {
     console.error("General error:", error);
-    res.status(500).json({ error: "Could not process request" });
+    res.status(500).json({ message: "Could not process request" });
   }
 };
