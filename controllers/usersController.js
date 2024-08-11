@@ -5,6 +5,7 @@ const {
   AdminCreateUserCommand,
   CognitoIdentityProviderClient,
   AdminGetUserCommand,
+  AdminUserGlobalSignOutCommand,
 } = require("@aws-sdk/client-cognito-identity-provider");
 const {
   PutCommand,
@@ -76,11 +77,9 @@ exports.GetUser = async (req, res) => {
   }
 };
 
-
 exports.CreateUser = async (req, res) => {
   const { name, role, permissions, email, phoneNumber } = req.body;
 
- 
   if (typeof name !== "string") {
     return res.status(400).json({ message: '"name" must be a string' });
   } else if (typeof role !== "string") {
@@ -112,6 +111,7 @@ exports.CreateUser = async (req, res) => {
     return res.status(500).json({ message: "Could not check email uniqueness" });
   }
 
+  const familyOwnerId = req.user.familyOwnerId || req.user.sub;
 
   const cognitoParams = {
     UserPoolId: USER_POOL_ID,
@@ -122,6 +122,7 @@ exports.CreateUser = async (req, res) => {
       { Name: "custom:phone_number", Value: phoneNumber },
       { Name: "custom:role", Value: role },
       { Name: "custom:permissions", Value: permissions.join(",") },
+      { Name: "custom:familyOwnerId", Value: familyOwnerId },
     ],
     DesiredDeliveryMediums: ["EMAIL"],
   };
@@ -146,7 +147,6 @@ exports.CreateUser = async (req, res) => {
     console.error("Error fetching user status from Cognito:", error);
   }
 
-
   const ownerId = req.user.sub;
   const userId = cognitoUser.User.Attributes.find((attr) => attr.Name === "sub").Value;
   const createdAt = new Date().toISOString();
@@ -157,12 +157,13 @@ exports.CreateUser = async (req, res) => {
     Item: {
       userId,
       ownerId,
+      ownerIds: [familyOwnerId],
       name,
       role,
       permissions,
       email,
       phoneNumber,
-      status: userStatus,  
+      status: userStatus,
       createdAt,
       updatedAt,
     },
@@ -170,6 +171,73 @@ exports.CreateUser = async (req, res) => {
 
   try {
     await docClient.send(new PutCommand(dynamoParams));
+
+    if (permissions.includes("Products:Read")) {
+      const productParams = {
+        TableName: PRODUCTS_TABLE,
+        FilterExpression: "contains(ownerIds, :familyOwnerId)",
+        ExpressionAttributeValues: { ":familyOwnerId": familyOwnerId },
+      };
+
+      const { Items: products } = await docClient.send(new ScanCommand(productParams));
+
+      for (const product of products) {
+        const updateProductParams = {
+          TableName: PRODUCTS_TABLE,
+          Key: { productId: product.productId },
+          UpdateExpression: "ADD ownerIds :userId",
+          ExpressionAttributeValues: {
+            ":userId": docClient.createSet([userId]),
+          },
+        };
+        await docClient.send(new UpdateCommand(updateProductParams));
+      }
+    }
+
+    if (permissions.includes("Categories:Read")) {
+      const categoryParams = {
+        TableName: CATEGORIES_TABLE,
+        FilterExpression: "contains(ownerIds, :familyOwnerId)",
+        ExpressionAttributeValues: { ":familyOwnerId": familyOwnerId },
+      };
+
+      const { Items: categories } = await docClient.send(new ScanCommand(categoryParams));
+
+      for (const category of categories) {
+        const updateCategoryParams = {
+          TableName: CATEGORIES_TABLE,
+          Key: { categoryId: category.categoryId },
+          UpdateExpression: "ADD ownerIds :userId",
+          ExpressionAttributeValues: {
+            ":userId": docClient.createSet([userId]),
+          },
+        };
+        await docClient.send(new UpdateCommand(updateCategoryParams));
+      }
+    }
+
+    if (permissions.includes("Users:Read")) {
+      const userParams = {
+        TableName: USERS_TABLE,
+        FilterExpression: "contains(ownerIds, :familyOwnerId)",
+        ExpressionAttributeValues: { ":familyOwnerId": familyOwnerId },
+      };
+
+      const { Items: users } = await docClient.send(new ScanCommand(userParams));
+
+      for (const user of users) {
+        const updateUserParams = {
+          TableName: USERS_TABLE,
+          Key: { userId: user.userId },
+          UpdateExpression: "ADD ownerIds :userId",
+          ExpressionAttributeValues: {
+            ":userId": docClient.createSet([userId]),
+          },
+        };
+        await docClient.send(new UpdateCommand(updateUserParams));
+      }
+    }
+
     res.json({
       userId,
       ownerId,
@@ -178,6 +246,7 @@ exports.CreateUser = async (req, res) => {
       permissions,
       email,
       phoneNumber,
+      ownerIds: [familyOwnerId],
       status: userStatus,
       createdAt,
       updatedAt,
@@ -187,6 +256,7 @@ exports.CreateUser = async (req, res) => {
     res.status(500).json({ message: "Could not create user in DynamoDB" });
   }
 };
+s
 
 
 exports.PatchUser = async (req, res) => {
@@ -260,37 +330,102 @@ exports.PatchUser = async (req, res) => {
   }
 };
 
-
-
+const AWS = require('aws-sdk');
+const apigatewaymanagementapi = new AWS.ApiGatewayManagementApi({
+    endpoint: '31zsiurny9.execute-api.us-east-1.amazonaws.com/production'
+});
 
 exports.DeleteUser = async (req, res) => {
   const { userId } = req.params;
 
   const getUserParams = {
-    TableName: USERS_TABLE,
-    Key: { userId },
+      TableName: USERS_TABLE,
+      Key: { userId },
   };
 
   try {
-    const { Item } = await docClient.send(new GetCommand(getUserParams));
-    if (!Item || (Item.ownerId !== req.user.sub && Item.userId !== req.user.sub)) {
-      return res.status(403).json({ message: "Access denied" });
-    }
+      const { Item } = await docClient.send(new GetCommand(getUserParams));
+      if (!Item || (Item.ownerId !== req.user.sub && Item.userId !== req.user.sub)) {
+          return res.status(403).json({ message: "Access denied" });
+      }
 
+      const permissions = Item.permissions;
 
-    await docClient.send(new DeleteCommand(getUserParams));
+      if (permissions.includes("Products:Read")) {
+          const productParams = {
+              TableName: PRODUCTS_TABLE,
+              FilterExpression: "contains(ownerIds, :userId)",
+              ExpressionAttributeValues: { ":userId": userId },
+          };
 
+          const { Items: products } = await docClient.send(new ScanCommand(productParams));
 
-    const cognitoParams = {
-      UserPoolId: USER_POOL_ID,
-      Username: Item.email, 
-    };
+          for (const product of products) {
+              const updateProductParams = {
+                  TableName: PRODUCTS_TABLE,
+                  Key: { productId: product.productId },
+                  UpdateExpression: "DELETE ownerIds :userId",
+                  ExpressionAttributeValues: {
+                      ":userId": docClient.createSet([userId]),
+                  },
+              };
+              await docClient.send(new UpdateCommand(updateProductParams));
+          }
+      }
 
-    await cognitoClient.send(new AdminDeleteUserCommand(cognitoParams));
+      if (permissions.includes("Categories:Read")) {
+          const categoryParams = {
+              TableName: CATEGORIES_TABLE,
+              FilterExpression: "contains(ownerIds, :userId)",
+              ExpressionAttributeValues: { ":userId": userId },
+          };
 
-    res.json({ message: "User deleted successfully" });
+          const { Items: categories } = await docClient.send(new ScanCommand(categoryParams));
+
+          for (const category of categories) {
+              const updateCategoryParams = {
+                  TableName: CATEGORIES_TABLE,
+                  Key: { categoryId: category.categoryId },
+                  UpdateExpression: "DELETE ownerIds :userId",
+                  ExpressionAttributeValues: {
+                      ":userId": docClient.createSet([userId]),
+                  },
+              };
+              await docClient.send(new UpdateCommand(updateCategoryParams));
+          }
+      }
+
+      if (permissions.includes("Users:Read")) {
+          const userParams = {
+              TableName: USERS_TABLE,
+              FilterExpression: "contains(ownerIds, :userId)",
+              ExpressionAttributeValues: { ":userId": userId },
+          };
+
+          const { Items: users } = await docClient.send(new ScanCommand(userParams));
+
+          for (const user of users) {
+              const updateUserParams = {
+                  TableName: USERS_TABLE,
+                  Key: { userId: user.userId },
+                  UpdateExpression: "DELETE ownerIds :userId",
+                  ExpressionAttributeValues: {
+                      ":userId": docClient.createSet([userId]),
+                  },
+              };
+              await docClient.send(new UpdateCommand(updateUserParams));
+          }
+      }
+
+      await docClient.send(new DeleteCommand(getUserParams));
+      await cognitoClient.send(new AdminDeleteUserCommand({
+          UserPoolId: USER_POOL_ID,
+          Username: Item.email,
+      }));
+
+      res.json({ message: "User deleted successfully" });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: "Could not delete user" });
+      console.error(error);
+      res.status(500).json({ message: "Could not delete user" });
   }
 };

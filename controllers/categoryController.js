@@ -13,9 +13,9 @@ const docClient = DynamoDBDocumentClient.from(client);
 
 const CATEGORIES_TABLE = process.env.CATEGORIES_TABLE;
 const USERS_TABLE = process.env.USERS_TABLE;
-
 exports.CreateCategory = async (req, res) => {
   const { categoryName } = req.body;
+  const familyOwnerId = req.user.familyOwnerId || req.user.sub;
   const ownerId = req.user.sub;
   const categoryId = uuidv4();
   const createdAt = new Date().toISOString();
@@ -27,16 +27,12 @@ exports.CreateCategory = async (req, res) => {
   };
 
   let ownerName;
-  let ownerIds = [ownerId]; 
+  let ownerIds = [ownerId, familyOwnerId];
 
   try {
     const userData = await docClient.send(new GetCommand(userParams));
     if (userData.Item) {
-      ownerName = userData.Item.name; 
-      
-      if (userData.Item.ownerId && userData.Item.ownerId !== ownerId) {
-        ownerIds.push(userData.Item.ownerId);
-      }
+      ownerName = userData.Item.name;
     } else {
       return res.status(404).json({ message: "User not found" });
     }
@@ -63,7 +59,7 @@ exports.CreateCategory = async (req, res) => {
     res.json({
       categoryId,
       ownerIds,
-      ownerName, 
+      ownerName,
       categoryName,
       productCount: 0,
       createdAt,
@@ -74,8 +70,6 @@ exports.CreateCategory = async (req, res) => {
     res.status(500).json({ message: "Could not create category" });
   }
 };
-
-
 
 exports.GetCategory = async (req, res) => {
   const { categoryId } = req.params;
@@ -91,9 +85,7 @@ exports.GetCategory = async (req, res) => {
     if (Item && Item.ownerIds.includes(ownerId)) {
       res.json(Item);
     } else {
-      res
-        .status(404)
-        .json({ message: "Could not find category or access denied" });
+      res.status(404).json({ message: "Could not find category or access denied" });
     }
   } catch (error) {
     console.error(error);
@@ -102,7 +94,6 @@ exports.GetCategory = async (req, res) => {
 };
 
 exports.ListCategories = async (req, res) => {
-
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, PATCH, DELETE");
@@ -110,7 +101,7 @@ exports.ListCategories = async (req, res) => {
 
   const params = {
     TableName: CATEGORIES_TABLE,
-    FilterExpression: "contains(ownerIds, :ownerId)", 
+    FilterExpression: "contains(ownerIds, :ownerId)",
     ExpressionAttributeValues: {
       ":ownerId": ownerId,
     },
@@ -131,7 +122,6 @@ exports.UpdateCategory = async (req, res) => {
   const ownerId = req.user.sub;
   const updatedAt = new Date().toISOString();
 
-
   const getCategoryParams = {
     TableName: CATEGORIES_TABLE,
     Key: { categoryId },
@@ -139,7 +129,7 @@ exports.UpdateCategory = async (req, res) => {
 
   try {
     const categoryData = await docClient.send(new GetCommand(getCategoryParams));
-    
+
     if (!categoryData.Item) {
       return res.status(404).json({ message: "Category not found" });
     }
@@ -147,7 +137,6 @@ exports.UpdateCategory = async (req, res) => {
     if (!categoryData.Item.ownerIds || !categoryData.Item.ownerIds.includes(ownerId)) {
       return res.status(403).json({ message: "Access denied or ownerIds missing" });
     }
-
 
     const updateCategoryParams = {
       TableName: CATEGORIES_TABLE,
@@ -162,10 +151,9 @@ exports.UpdateCategory = async (req, res) => {
 
     const { Attributes } = await docClient.send(new UpdateCommand(updateCategoryParams));
 
-  
     const updateProductParams = {
       TableName: PRODUCTS_TABLE,
-      IndexName: 'categoryId-index', 
+      IndexName: 'categoryId-index',
       KeyConditionExpression: 'categoryId = :categoryId',
       ExpressionAttributeValues: {
         ':categoryId': categoryId,
@@ -194,11 +182,9 @@ exports.UpdateCategory = async (req, res) => {
   }
 };
 
-
 exports.DeleteCategory = async (req, res) => {
   const { categoryId } = req.params;
   const ownerId = req.user.sub;
-
 
   const getCategoryParams = {
     TableName: CATEGORIES_TABLE,
@@ -220,11 +206,33 @@ exports.DeleteCategory = async (req, res) => {
       return res.status(400).json({ message: "Cannot delete category: There are products linked to this category. Please delete the products first." });
     }
 
+    // Kategori silindiğinde, tüm ürünlerden ve kullanıcılardan da ownerId'yi sil
+    const productParams = {
+      TableName: PRODUCTS_TABLE,
+      FilterExpression: "categoryId = :categoryId",
+      ExpressionAttributeValues: {
+        ":categoryId": categoryId,
+      },
+    };
+
+    const { Items: products } = await docClient.send(new ScanCommand(productParams));
+
+    for (const product of products) {
+      const updateProductParams = {
+        TableName: PRODUCTS_TABLE,
+        Key: { productId: product.productId },
+        UpdateExpression: "DELETE ownerIds :ownerId",
+        ExpressionAttributeValues: {
+          ":ownerId": docClient.createSet([ownerId]),
+        },
+      };
+      await docClient.send(new UpdateCommand(updateProductParams));
+    }
 
     const deleteParams = {
       TableName: CATEGORIES_TABLE,
       Key: { categoryId },
-      ConditionExpression: "contains(ownerIds, :ownerId)", 
+      ConditionExpression: "contains(ownerIds, :ownerId)",
       ExpressionAttributeValues: {
         ":ownerId": ownerId,
       },

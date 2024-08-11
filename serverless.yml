@@ -41,8 +41,14 @@ provider:
             - cognito-idp:AdminGetUser
             - cognito-idp:AdminDeleteUser
             - cognito-idp:AdminUpdateUserAttributes
+            - cognito-idp:AdminUserGlobalSignOut
           Resource:
-            - arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+           - arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+        - Effect: Allow
+          Action:
+            - execute-api:ManageConnections
+          Resource:
+            - arn:aws:execute-api:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:31zsiurny9/production/POST/@connections/*
   environment:
     USERS_TABLE: ${self:custom.usersTableName}
     PRODUCTS_TABLE: ${self:custom.productsTableName}
