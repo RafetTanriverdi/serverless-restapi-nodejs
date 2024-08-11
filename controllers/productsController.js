@@ -31,17 +31,33 @@ exports.ListProducts = async (req, res) => {
     "Access-Control-Allow-Methods",
     "GET, POST, OPTIONS, PUT, PATCH, DELETE"
   );
+
   const ownerId = req.user.sub;
 
-  const params = {
-    TableName: PRODUCTS_TABLE,
-    FilterExpression: "contains(ownerIds, :ownerId)",
-    ExpressionAttributeValues: {
-      ":ownerId": ownerId,
-    },
+  const getUserParams = {
+    TableName: USERS_TABLE,
+    Key: { userId: ownerId },
   };
 
   try {
+    const { Item: currentUser } = await docClient.send(
+      new GetCommand(getUserParams)
+    );
+    if (!currentUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const familyId = currentUser.familyId;
+
+    const params = {
+      TableName: PRODUCTS_TABLE,
+      FilterExpression: "familyId = :familyId OR ownerId = :ownerId",
+      ExpressionAttributeValues: {
+        ":familyId": familyId,
+        ":ownerId": ownerId,
+      },
+    };
+
     const { Items } = await docClient.send(new ScanCommand(params));
     res.json(Items);
   } catch (error) {
@@ -54,14 +70,32 @@ exports.GetProduct = async (req, res) => {
   const { productId } = req.params;
   const ownerId = req.user.sub;
 
-  const params = {
-    TableName: PRODUCTS_TABLE,
-    Key: { productId },
+  const getUserParams = {
+    TableName: USERS_TABLE,
+    Key: { userId: ownerId },
   };
 
   try {
+    const { Item: currentUser } = await docClient.send(
+      new GetCommand(getUserParams)
+    );
+    if (!currentUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const familyId = currentUser.familyId;
+
+    const params = {
+      TableName: PRODUCTS_TABLE,
+      Key: { productId },
+    };
+
     const { Item } = await docClient.send(new GetCommand(params));
-    if (Item && Item.ownerIds.includes(ownerId) && Item.active) {
+    if (
+      Item &&
+      (Item.familyId === familyId || Item.ownerId === ownerId) &&
+      Item.active
+    ) {
       res.json(Item);
     } else {
       res
@@ -84,7 +118,27 @@ exports.CreateProduct = async (req, res) => {
     categoryId,
     stock = 0,
     active = true,
+    sharedStatus,
   } = req.body;
+
+  const ownerId = req.user.sub;
+
+  const getUserParams = {
+    TableName: USERS_TABLE,
+    Key: { userId: ownerId },
+  };
+
+  let familyId;
+  try {
+    const { Item } = await docClient.send(new GetCommand(getUserParams));
+    if (!Item) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    familyId = Item.familyId || ownerId;
+  } catch (error) {
+    console.error("Error fetching user data:", error);
+    return res.status(500).json({ message: "Could not fetch user data" });
+  }
 
   const cognitoUserParams = {
     UserPoolId: process.env.USER_POOL_ID,
@@ -121,15 +175,12 @@ exports.CreateProduct = async (req, res) => {
       return res.status(500).json({ message: "Image upload failed" });
     }
 
-    const ownerId = req.user.sub;
     const productId = uuidv4();
     const createdAt = new Date().toISOString();
     const updatedAt = createdAt;
 
-    let ownerIds = [ownerId];
-
     const stripeProduct = await stripe.products.create({
-      name: productName, 
+      name: productName,
       description,
       images: [imageUrl],
       metadata: {
@@ -143,25 +194,31 @@ exports.CreateProduct = async (req, res) => {
       product: stripeProduct.id,
     });
 
+    const productItem = {
+      productId,
+      ownerId,
+      ownerName,
+      productName,
+      price,
+      description,
+      imageUrl,
+      stripeProductId: stripeProduct.id,
+      stripePriceId: stripePrice.id,
+      categoryId,
+      categoryName,
+      createdAt,
+      updatedAt,
+      active,
+      stock,
+    };
+
+    if (sharedStatus) {
+      productItem.familyId = familyId;
+    }
+
     const params = {
       TableName: PRODUCTS_TABLE,
-      Item: {
-        productId,
-        ownerIds,
-        ownerName,
-        productName, 
-        price,
-        description,
-        imageUrl,
-        stripeProductId: stripeProduct.id,
-        stripePriceId: stripePrice.id,
-        categoryId,
-        categoryName,
-        createdAt,
-        updatedAt,
-        active,
-        stock,
-      },
+      Item: productItem,
     };
 
     await docClient.send(new PutCommand(params));
@@ -177,23 +234,7 @@ exports.CreateProduct = async (req, res) => {
 
     await docClient.send(new UpdateCommand(updateCategoryParams));
 
-    res.json({
-      productId,
-      ownerIds,
-      ownerName,
-      productName,
-      price,
-      description,
-      imageUrl,
-      stripeProductId: stripeProduct.id,
-      stripePriceId: stripePrice.id,
-      categoryId,
-      categoryName,
-      createdAt,
-      updatedAt,
-      active,
-      stock,
-    });
+    res.json(productItem);
   } catch (error) {
     console.error("Error creating product: ", error);
     res.status(500).json({ message: "Could not create product" });
@@ -211,9 +252,10 @@ exports.PatchProduct = async (req, res) => {
     categoryId,
     active,
     stock,
+    sharedStatus,
   } = req.body;
 
-  const ownerId = req.user.sub;
+  const userId = req.user.sub;
   const updatedAt = new Date().toISOString();
 
   let imageUrl;
@@ -225,14 +267,31 @@ exports.PatchProduct = async (req, res) => {
       Key: { productId },
     };
 
-    const { Item } = await docClient.send(new GetCommand(getProductParams));
+    const { Item: product } = await docClient.send(
+      new GetCommand(getProductParams)
+    );
 
-    if (!Item) {
+    if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    stripeProductId = Item.stripeProductId;
-    imageUrl = Item.imageUrl;
+    const getUserParams = {
+      TableName: USERS_TABLE,
+      Key: { userId },
+    };
+
+    const { Item: user } = await docClient.send(new GetCommand(getUserParams));
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (product.familyId !== user.familyId && product.ownerId !== userId) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    stripeProductId = product.stripeProductId;
+    imageUrl = product.imageUrl;
 
     if (imageBase64 && imageMimeType) {
       try {
@@ -274,7 +333,7 @@ exports.PatchProduct = async (req, res) => {
 
   try {
     await stripe.products.update(stripeProductId, {
-      name: productName, 
+      name: productName,
       description,
       ...(imageUrl && { images: [imageUrl] }),
       active: active !== undefined ? active : true,
@@ -284,7 +343,9 @@ exports.PatchProduct = async (req, res) => {
     });
   } catch (error) {
     console.error("Stripe product update failed:", error);
-    return res.status(500).json({ message: `Could not update product in Stripe: ${error.message}` });
+    return res.status(500).json({
+      message: `Could not update product in Stripe: ${error.message}`,
+    });
   }
 
   try {
@@ -309,22 +370,27 @@ exports.PatchProduct = async (req, res) => {
         `SET #productName = :productName, price = :price, description = :description, updatedAt = :updatedAt, 
          stripePriceId = :stripePriceId, stock = :stock` +
         (imageUrl ? ", imageUrl = :imageUrl" : "") +
-        (categoryId ? ", categoryId = :categoryId, categoryName = :categoryName" : "") +
-        (active !== undefined ? ", active = :active" : ""),
-      ExpressionAttributeNames: { "#productName": "productName" }, 
+        (categoryId
+          ? ", categoryId = :categoryId, categoryName = :categoryName"
+          : "") +
+        (active !== undefined ? ", active = :active" : "") +
+        (sharedStatus ? ", familyId = :familyId" : ""),
+      ExpressionAttributeNames: { "#productName": "productName" },
       ExpressionAttributeValues: {
-        ":productName": productName, 
+        ":productName": productName,
         ":price": price,
         ":description": description,
         ":updatedAt": updatedAt,
         ":stripePriceId": stripePrice.id,
         ":stock": stock,
-        ":ownerId": ownerId,
         ...(imageUrl && { ":imageUrl": imageUrl }),
-        ...(categoryId && { ":categoryId": categoryId, ":categoryName": categoryName }),
+        ...(categoryId && {
+          ":categoryId": categoryId,
+          ":categoryName": categoryName,
+        }),
         ...(active !== undefined && { ":active": active }),
+        ...(sharedStatus && { ":familyId": product.familyId }),
       },
-      ConditionExpression: "contains(ownerIds, :ownerId)",
       ReturnValues: "ALL_NEW",
     };
 
@@ -332,7 +398,9 @@ exports.PatchProduct = async (req, res) => {
     res.json(Attributes);
   } catch (error) {
     console.error("DynamoDB update failed:", error);
-    return res.status(500).json({ message: `Could not update product in DynamoDB: ${error.message}` });
+    return res.status(500).json({
+      message: `Could not update product in DynamoDB: ${error.message}`,
+    });
   }
 };
 
@@ -349,7 +417,7 @@ exports.DeleteProduct = async (req, res) => {
     const { Item } = await docClient.send(new GetCommand(getProductParams));
     console.log("Retrieved Item:", Item);
 
-    if (Item && Item.ownerIds.includes(ownerId)) {
+    if (Item && (Item.ownerId === ownerId || Item.familyId === ownerId)) {
       try {
         await stripe.products.update(Item.stripeProductId, {
           active: false,
@@ -382,15 +450,18 @@ exports.DeleteProduct = async (req, res) => {
         console.log("Category product count decremented");
       } catch (error) {
         console.error("Error updating category product count:", error);
-        return res.status(500).json({ message: "Could not update category product count" });
+        return res
+          .status(500)
+          .json({ message: "Could not update category product count" });
       }
 
       const deleteParams = {
         TableName: PRODUCTS_TABLE,
         Key: { productId },
-        ConditionExpression: "contains(ownerIds, :ownerId)",
+        ConditionExpression: "ownerId = :ownerId OR familyId = :familyId",
         ExpressionAttributeValues: {
           ":ownerId": ownerId,
+          ":familyId": Item.familyId,
         },
       };
 
