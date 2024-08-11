@@ -77,9 +77,11 @@ exports.GetUser = async (req, res) => {
   }
 };
 
+
 exports.CreateUser = async (req, res) => {
   const { name, role, permissions, email, phoneNumber } = req.body;
 
+  // Giriş verilerinin doğrulanması
   if (typeof name !== "string") {
     return res.status(400).json({ message: '"name" must be a string' });
   } else if (typeof role !== "string") {
@@ -92,6 +94,7 @@ exports.CreateUser = async (req, res) => {
     return res.status(400).json({ message: '"phoneNumber" must be a string' });
   }
 
+  // Email'in benzersiz olup olmadığının kontrolü
   const queryParams = {
     TableName: USERS_TABLE,
     IndexName: "EmailIndex",
@@ -111,8 +114,7 @@ exports.CreateUser = async (req, res) => {
     return res.status(500).json({ message: "Could not check email uniqueness" });
   }
 
-  const familyOwnerId = req.user.familyOwnerId || req.user.sub;
-
+  // Cognito'da kullanıcı oluşturma
   const cognitoParams = {
     UserPoolId: USER_POOL_ID,
     Username: email,
@@ -122,7 +124,6 @@ exports.CreateUser = async (req, res) => {
       { Name: "custom:phone_number", Value: phoneNumber },
       { Name: "custom:role", Value: role },
       { Name: "custom:permissions", Value: permissions.join(",") },
-      { Name: "custom:familyOwnerId", Value: familyOwnerId },
     ],
     DesiredDeliveryMediums: ["EMAIL"],
   };
@@ -135,6 +136,7 @@ exports.CreateUser = async (req, res) => {
     return res.status(500).json({ message: "Could not create user in Cognito" });
   }
 
+  // Yeni kullanıcı oluşturulduğunda durumu Cognito'dan almak
   let userStatus = "pending"; 
   try {
     const getUserParams = {
@@ -147,23 +149,25 @@ exports.CreateUser = async (req, res) => {
     console.error("Error fetching user status from Cognito:", error);
   }
 
+  // Kullanıcının ID'sini ve diğer bilgileri al
   const ownerId = req.user.sub;
   const userId = cognitoUser.User.Attributes.find((attr) => attr.Name === "sub").Value;
   const createdAt = new Date().toISOString();
   const updatedAt = createdAt;
 
+  // Kullanıcı veritabanına ekleme
   const dynamoParams = {
     TableName: USERS_TABLE,
     Item: {
       userId,
       ownerId,
-      ownerIds: [familyOwnerId],
+      ownerIds: [ownerId],
       name,
       role,
       permissions,
       email,
       phoneNumber,
-      status: userStatus,
+      status: userStatus,  
       createdAt,
       updatedAt,
     },
@@ -172,15 +176,16 @@ exports.CreateUser = async (req, res) => {
   try {
     await docClient.send(new PutCommand(dynamoParams));
 
+    // Products:Read izni varsa, ekleyen kullanıcının oluşturduğu ürünlere yeni kullanıcıyı ekle
     if (permissions.includes("Products:Read")) {
       const productParams = {
         TableName: PRODUCTS_TABLE,
-        FilterExpression: "contains(ownerIds, :familyOwnerId)",
-        ExpressionAttributeValues: { ":familyOwnerId": familyOwnerId },
+        FilterExpression: "contains(ownerIds, :creatorId)",
+        ExpressionAttributeValues: { ":creatorId": ownerId },
       };
 
       const { Items: products } = await docClient.send(new ScanCommand(productParams));
-
+      
       for (const product of products) {
         const updateProductParams = {
           TableName: PRODUCTS_TABLE,
@@ -194,11 +199,12 @@ exports.CreateUser = async (req, res) => {
       }
     }
 
+    // Categories:Read izni varsa, ekleyen kullanıcının oluşturduğu kategorilere yeni kullanıcıyı ekle
     if (permissions.includes("Categories:Read")) {
       const categoryParams = {
         TableName: CATEGORIES_TABLE,
-        FilterExpression: "contains(ownerIds, :familyOwnerId)",
-        ExpressionAttributeValues: { ":familyOwnerId": familyOwnerId },
+        FilterExpression: "contains(ownerIds, :creatorId)",
+        ExpressionAttributeValues: { ":creatorId": ownerId },
       };
 
       const { Items: categories } = await docClient.send(new ScanCommand(categoryParams));
@@ -216,11 +222,12 @@ exports.CreateUser = async (req, res) => {
       }
     }
 
+    // Users:Read izni varsa, ekleyen kullanıcının oluşturduğu diğer kullanıcılara yeni kullanıcıyı ekle
     if (permissions.includes("Users:Read")) {
       const userParams = {
         TableName: USERS_TABLE,
-        FilterExpression: "contains(ownerIds, :familyOwnerId)",
-        ExpressionAttributeValues: { ":familyOwnerId": familyOwnerId },
+        FilterExpression: "contains(ownerIds, :creatorId)",
+        ExpressionAttributeValues: { ":creatorId": ownerId },
       };
 
       const { Items: users } = await docClient.send(new ScanCommand(userParams));
@@ -246,7 +253,7 @@ exports.CreateUser = async (req, res) => {
       permissions,
       email,
       phoneNumber,
-      ownerIds: [familyOwnerId],
+      ownerIds: [ownerId],
       status: userStatus,
       createdAt,
       updatedAt,
@@ -256,7 +263,6 @@ exports.CreateUser = async (req, res) => {
     res.status(500).json({ message: "Could not create user in DynamoDB" });
   }
 };
-s
 
 
 exports.PatchUser = async (req, res) => {
@@ -349,8 +355,12 @@ exports.DeleteUser = async (req, res) => {
           return res.status(403).json({ message: "Access denied" });
       }
 
+      const connectionId = Item.connectionId;
+
+      // Kullanıcıya ait tüm tablolardan ownerIds'den silinmesi gereken işlemler
       const permissions = Item.permissions;
 
+      // Products:Read izni varsa, ürünlerin ownerIds listesinden bu kullanıcıyı çıkar
       if (permissions.includes("Products:Read")) {
           const productParams = {
               TableName: PRODUCTS_TABLE,
@@ -373,6 +383,7 @@ exports.DeleteUser = async (req, res) => {
           }
       }
 
+      // Categories:Read izni varsa, kategorilerin ownerIds listesinden bu kullanıcıyı çıkar
       if (permissions.includes("Categories:Read")) {
           const categoryParams = {
               TableName: CATEGORIES_TABLE,
@@ -395,6 +406,7 @@ exports.DeleteUser = async (req, res) => {
           }
       }
 
+      // Users:Read izni varsa, kullanıcıların ownerIds listesinden bu kullanıcıyı çıkar
       if (permissions.includes("Users:Read")) {
           const userParams = {
               TableName: USERS_TABLE,
@@ -416,6 +428,13 @@ exports.DeleteUser = async (req, res) => {
               await docClient.send(new UpdateCommand(updateUserParams));
           }
       }
+
+      // Kullanıcıyı silme işlemi
+      const message = JSON.stringify({ action: 'clearLocalStorage' });
+      await apigatewaymanagementapi.postToConnection({
+          ConnectionId: connectionId,
+          Data: message,
+      }).promise();
 
       await docClient.send(new DeleteCommand(getUserParams));
       await cognitoClient.send(new AdminDeleteUserCommand({
