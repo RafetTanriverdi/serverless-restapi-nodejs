@@ -49,6 +49,15 @@ exports.CreateUser = async (req, res) => {
     },
   };
 
+  const getCurrentuserParams = {
+    TableName: USERS_TABLE,
+    Key: { userId: req.user.sub },
+  };
+
+  const { Item: currentUser } = await docClient.send(
+    new GetCommand(getCurrentuserParams)
+  );
+
   try {
     const { Items } = await docClient.send(new QueryCommand(queryParams));
     if (Items.length > 0) {
@@ -102,14 +111,14 @@ exports.CreateUser = async (req, res) => {
     console.error("Error fetching user status from Cognito:", error);
   }
 
-  const ownerId = req.user.sub;
+  const ownerId =  req.user.sub;
   const userId = cognitoUser.User.Attributes.find(
     (attr) => attr.Name === "sub"
   ).Value;
   const createdAt = new Date().toISOString();
   const updatedAt = createdAt;
 
-  const familyId = ownerId;
+  const familyId = currentUser.familyId ||ownerId;
 
   const dynamoParams = {
     TableName: USERS_TABLE,
@@ -231,14 +240,10 @@ exports.PatchUser = async (req, res) => {
     Key: { userId },
   };
 
+
   try {
     const { Item } = await docClient.send(new GetCommand(getUserParams));
-    if (
-      !Item ||
-      (Item.ownerId !== req.user.sub && Item.userId !== req.user.sub)
-    ) {
-      return res.status(403).json({ message: "Access denied" });
-    }
+
 
     const cognitoParams = {
       UserPoolId: USER_POOL_ID,
@@ -317,7 +322,7 @@ exports.DeleteUser = async (req, res) => {
     const { Item } = await docClient.send(new GetCommand(getUserParams));
     if (
       !Item ||
-      (Item.ownerId !== req.user.sub && Item.userId !== req.user.sub)
+      (Item.ownerId !== req.user.sub && Item.userId !== req.user.sub&&Item.familyId!==req.userId)
     ) {
       return res.status(403).json({ message: "Access denied" });
     }

@@ -403,81 +403,91 @@ exports.PatchProduct = async (req, res) => {
     });
   }
 };
-
 exports.DeleteProduct = async (req, res) => {
   const { productId } = req.params;
-  const ownerId = req.user.sub;
+  const userId = req.user.sub;
 
   const getProductParams = {
     TableName: PRODUCTS_TABLE,
     Key: { productId },
   };
 
+  const getUserParams = {
+    TableName: USERS_TABLE,
+    Key: { userId },
+  };
+
   try {
-    const { Item } = await docClient.send(new GetCommand(getProductParams));
-    console.log("Retrieved Item:", Item);
+    const [productResult, userResult] = await Promise.all([
+      docClient.send(new GetCommand(getProductParams)),
+      docClient.send(new GetCommand(getUserParams)),
+    ]);
 
-    if (Item && (Item.ownerId === ownerId || Item.familyId === ownerId)) {
-      try {
-        await stripe.products.update(Item.stripeProductId, {
-          active: false,
-        });
-        console.log(
-          "Product marked as inactive in Stripe:",
-          Item.stripeProductId
-        );
-      } catch (error) {
-        console.error("Error marking product as inactive in Stripe:", error);
-        return res
-          .status(500)
-          .json({ message: "Could not update product in Stripe" });
+    const product = productResult.Item;
+    const user = userResult.Item;
+
+    if (!product || !user) {
+      return res.status(404).json({ message: "Product or User not found" });
+    }
+
+    if (product.familyId !== user.familyId) {
+      if (product.ownerId !== userId) {
+        return res.status(403).json({ message: "Access denied" });
       }
+    }
 
-      const updateCategoryParams = {
-        TableName: process.env.CATEGORIES_TABLE,
-        Key: { categoryId: Item.categoryId },
-        UpdateExpression: "SET productCount = productCount - :dec",
-        ConditionExpression: "productCount > :zero",
-        ExpressionAttributeValues: {
-          ":dec": 1,
-          ":zero": 0,
-        },
-        ReturnValues: "UPDATED_NEW",
-      };
 
-      try {
-        await docClient.send(new UpdateCommand(updateCategoryParams));
-        console.log("Category product count decremented");
-      } catch (error) {
-        console.error("Error updating category product count:", error);
-        return res
-          .status(500)
-          .json({ message: "Could not update category product count" });
-      }
+    try {
+      await stripe.products.update(product.stripeProductId, {
+        active: false,
+      });
+      console.log("Product marked as inactive in Stripe:", product.stripeProductId);
+    } catch (error) {
+      console.error("Error marking product as inactive in Stripe:", error);
+      return res
+        .status(500)
+        .json({ message: "Could not update product in Stripe" });
+    }
 
-      const deleteParams = {
-        TableName: PRODUCTS_TABLE,
-        Key: { productId },
-        ConditionExpression: "ownerId = :ownerId OR familyId = :familyId",
-        ExpressionAttributeValues: {
-          ":ownerId": ownerId,
-          ":familyId": Item.familyId,
-        },
-      };
+    const updateCategoryParams = {
+      TableName: process.env.CATEGORIES_TABLE,
+      Key: { categoryId: product.categoryId },
+      UpdateExpression: "SET productCount = productCount - :dec",
+      ConditionExpression: "productCount > :zero",
+      ExpressionAttributeValues: {
+        ":dec": 1,
+        ":zero": 0,
+      },
+      ReturnValues: "UPDATED_NEW",
+    };
 
-      try {
-        await docClient.send(new DeleteCommand(deleteParams));
-        res.json({ message: "Product deleted successfully" });
-      } catch (error) {
-        console.error("Error deleting product from DynamoDB:", error);
-        res
-          .status(500)
-          .json({ message: "Could not delete product from database" });
-      }
-    } else {
+    try {
+      await docClient.send(new UpdateCommand(updateCategoryParams));
+      console.log("Category product count decremented");
+    } catch (error) {
+      console.error("Error updating category product count:", error);
+      return res
+        .status(500)
+        .json({ message: "Could not update category product count" });
+    }
+
+    const deleteParams = {
+      TableName: PRODUCTS_TABLE,
+      Key: { productId },
+      ConditionExpression: "productId = :productId",
+      ExpressionAttributeValues: {
+        ":productId": productId,
+      },
+    };
+
+    try {
+      await docClient.send(new DeleteCommand(deleteParams));
+      res.json({ message: "Product deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting product from DynamoDB:", error);
       res
-        .status(404)
-        .json({ message: "Could not find product or access denied" });
+        .status(500)
+        .json({ message: "Could not delete product from database" });
     }
   } catch (error) {
     console.error("General error:", error);

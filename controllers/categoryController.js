@@ -263,52 +263,46 @@ exports.UpdateCategory = async (req, res) => {
 
 exports.DeleteCategory = async (req, res) => {
   const { categoryId } = req.params;
-  const ownerId = req.user.sub;
+  const userId = req.user.sub;
 
-  const userParams = {
+  const getUserParams = {
     TableName: USERS_TABLE,
-    Key: { userId: ownerId },
+    Key: { userId },
   };
 
   try {
-    const { Item: currentUser } = await docClient.send(
-      new GetCommand(userParams)
-    );
-    if (!currentUser) {
-      return res.status(404).json({ message: "User not found" });
+    const [categoryResult, userResult] = await Promise.all([
+      docClient.send(
+        new GetCommand({ TableName: CATEGORIES_TABLE, Key: { categoryId } })
+      ),
+      docClient.send(new GetCommand(getUserParams)),
+    ]);
+
+    const category = categoryResult.Item;
+    const user = userResult.Item;
+
+    if (!category || !user) {
+      return res.status(404).json({ message: "Category or User not found" });
     }
 
-    const familyId = currentUser.familyId;
-
-    const getCategoryParams = {
-      TableName: CATEGORIES_TABLE,
-      Key: { categoryId },
-    };
-
-    const { Item } = await docClient.send(new GetCommand(getCategoryParams));
-
-    if (!Item) {
-      return res.status(404).json({ message: "Category not found" });
+    if (category.familyId !== user.familyId) {
+      if (category.ownerId !== userId) {
+        return res.status(403).json({ message: "Access denied" });
+      }
     }
 
-    if (Item.ownerId !== ownerId && Item.familyId !== familyId) {
-      return res.status(403).json({ message: "Access denied" });
-    }
-
-    if (Item.productCount > 0) {
+    if (category.productCount > 0) {
       return res.status(400).json({
         message:
           "Cannot delete category: There are products linked to this category. Please delete the products first.",
       });
     }
-
     const deleteParams = {
       TableName: CATEGORIES_TABLE,
       Key: { categoryId },
-      ConditionExpression: "ownerId = :ownerId OR familyId = :familyId",
+      ConditionExpression: "categoryId = :categoryId",
       ExpressionAttributeValues: {
-        ":ownerId": ownerId,
-        ":familyId": Item.familyId,
+        ":categoryId": categoryId,
       },
     };
 
@@ -320,7 +314,7 @@ exports.DeleteCategory = async (req, res) => {
       res.status(500).json({ message: "Could not delete category" });
     }
   } catch (error) {
-    console.error("Error fetching category data:", error);
+    console.error("Error fetching category or user data:", error);
     res.status(500).json({ message: "Could not process request" });
   }
 };
