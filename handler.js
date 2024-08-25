@@ -1,15 +1,16 @@
 const express = require("express");
 const serverless = require("serverless-http");
+const bodyParser = require('body-parser');
 const userRouter = require("./routes/usersRoute");
 const productRouter = require("./routes/productsRoute");
 const categoryRouter = require("./routes/categoryRoute");
-
 require('dotenv').config();
-
 
 const app = express();
 
 app.use(express.json());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 // CORS Middleware
 app.use((req, res, next) => {

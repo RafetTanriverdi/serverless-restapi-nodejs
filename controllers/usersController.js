@@ -160,7 +160,6 @@ exports.CreateUser = async (req, res) => {
 };
 
 exports.ListUsers = async (req, res) => {
-  console.log(res, req, "res and req");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   res.setHeader(

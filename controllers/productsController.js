@@ -113,8 +113,7 @@ exports.CreateProduct = async (req, res) => {
     productName,
     price,
     description,
-    imageBase64,
-    imageMimeType,
+    images, 
     categoryId,
     stock = 0,
     active = true,
@@ -164,15 +163,19 @@ exports.CreateProduct = async (req, res) => {
     }
     const categoryName = categoryData.Item.categoryName;
 
-    let imageUrl;
-    try {
-      imageUrl = await uploadImageToS3(
-        Buffer.from(imageBase64, "base64"),
-        imageMimeType
-      );
-    } catch (error) {
-      console.error("Image upload failed:", error);
-      return res.status(500).json({ message: "Image upload failed" });
+  
+    const imageUrls = [];
+    for (const { imageBase64, imageMimeType } of images) {
+      try {
+        const imageUrl = await uploadImageToS3(
+          Buffer.from(imageBase64, "base64"),
+          imageMimeType
+        );
+        imageUrls.push(imageUrl);
+      } catch (error) {
+        console.error("Image upload failed:", error);
+        return res.status(500).json({ message: "Image upload failed" });
+      }
     }
 
     const productId = uuidv4();
@@ -182,7 +185,7 @@ exports.CreateProduct = async (req, res) => {
     const stripeProduct = await stripe.products.create({
       name: productName,
       description,
-      images: [imageUrl],
+      images: imageUrls, 
       metadata: {
         stock: stock.toString(),
       },
@@ -201,7 +204,7 @@ exports.CreateProduct = async (req, res) => {
       productName,
       price,
       description,
-      imageUrl,
+      imageUrls, 
       stripeProductId: stripeProduct.id,
       stripePriceId: stripePrice.id,
       categoryId,
@@ -240,15 +243,14 @@ exports.CreateProduct = async (req, res) => {
     res.status(500).json({ message: "Could not create product" });
   }
 };
-
 exports.PatchProduct = async (req, res) => {
   const { productId } = req.params;
   const {
     productName,
     price,
     description,
-    imageBase64,
-    imageMimeType,
+    images = [],
+    imageUrls = [], 
     categoryId,
     active,
     stock,
@@ -258,7 +260,6 @@ exports.PatchProduct = async (req, res) => {
   const userId = req.user.sub;
   const updatedAt = new Date().toISOString();
 
-  let imageUrl;
   let stripeProductId;
 
   try {
@@ -291,22 +292,21 @@ exports.PatchProduct = async (req, res) => {
     }
 
     stripeProductId = product.stripeProductId;
-    imageUrl = product.imageUrl;
 
-    if (imageBase64 && imageMimeType) {
+  
+    for (const { imageBase64, imageMimeType } of images) {
       try {
-        if (imageUrl) {
-          await deleteImageS3(imageUrl);
-        }
-        imageUrl = await uploadImageToS3(
+        const imageUrl = await uploadImageToS3(
           Buffer.from(imageBase64, "base64"),
           imageMimeType
         );
+        imageUrls.push(imageUrl);
       } catch (error) {
         console.error("Image upload failed:", error);
         return res.status(500).json({ message: "Image upload failed" });
       }
     }
+
   } catch (error) {
     console.error("Error fetching product:", error);
     return res.status(500).json({ message: "Error fetching product" });
@@ -335,7 +335,7 @@ exports.PatchProduct = async (req, res) => {
     await stripe.products.update(stripeProductId, {
       name: productName,
       description,
-      ...(imageUrl && { images: [imageUrl] }),
+      ...(imageUrls.length > 0 && { images: imageUrls }),  
       active: active !== undefined ? active : true,
       metadata: {
         stock: stock.toString(),
@@ -368,11 +368,8 @@ exports.PatchProduct = async (req, res) => {
       Key: { productId },
       UpdateExpression:
         `SET #productName = :productName, price = :price, description = :description, updatedAt = :updatedAt, 
-         stripePriceId = :stripePriceId, stock = :stock` +
-        (imageUrl ? ", imageUrl = :imageUrl" : "") +
-        (categoryId
-          ? ", categoryId = :categoryId, categoryName = :categoryName"
-          : "") +
+         stripePriceId = :stripePriceId, stock = :stock, imageUrls = :imageUrls` + 
+        (categoryId ? ", categoryId = :categoryId, categoryName = :categoryName" : "") +
         (active !== undefined ? ", active = :active" : "") +
         (sharedStatus ? ", familyId = :familyId" : ""),
       ExpressionAttributeNames: { "#productName": "productName" },
@@ -383,11 +380,8 @@ exports.PatchProduct = async (req, res) => {
         ":updatedAt": updatedAt,
         ":stripePriceId": stripePrice.id,
         ":stock": stock,
-        ...(imageUrl && { ":imageUrl": imageUrl }),
-        ...(categoryId && {
-          ":categoryId": categoryId,
-          ":categoryName": categoryName,
-        }),
+        ":imageUrls": imageUrls, 
+        ...(categoryId && { ":categoryId": categoryId, ":categoryName": categoryName }),
         ...(active !== undefined && { ":active": active }),
         ...(sharedStatus && { ":familyId": product.familyId }),
       },
@@ -403,6 +397,8 @@ exports.PatchProduct = async (req, res) => {
     });
   }
 };
+
+
 exports.DeleteProduct = async (req, res) => {
   const { productId } = req.params;
   const userId = req.user.sub;
@@ -436,18 +432,30 @@ exports.DeleteProduct = async (req, res) => {
       }
     }
 
+    try {
+      for (const imageUrl of product.imageUrls || []) {
+        await deleteImageS3(imageUrl); 
+      }
+    } catch (error) {
+      console.error("Error deleting images from S3:", error);
+      return res
+        .status(500)
+        .json({ message: "Could not delete images from S3" });
+    }
 
+  
     try {
       await stripe.products.update(product.stripeProductId, {
         active: false,
       });
-      console.log("Product marked as inactive in Stripe:", product.stripeProductId);
+    
     } catch (error) {
       console.error("Error marking product as inactive in Stripe:", error);
       return res
         .status(500)
         .json({ message: "Could not update product in Stripe" });
     }
+
 
     const updateCategoryParams = {
       TableName: process.env.CATEGORIES_TABLE,
@@ -463,7 +471,6 @@ exports.DeleteProduct = async (req, res) => {
 
     try {
       await docClient.send(new UpdateCommand(updateCategoryParams));
-      console.log("Category product count decremented");
     } catch (error) {
       console.error("Error updating category product count:", error);
       return res
@@ -471,6 +478,7 @@ exports.DeleteProduct = async (req, res) => {
         .json({ message: "Could not update category product count" });
     }
 
+  
     const deleteParams = {
       TableName: PRODUCTS_TABLE,
       Key: { productId },

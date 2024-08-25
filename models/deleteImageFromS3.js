@@ -14,4 +14,3 @@ exports.deleteImageS3 = async (imageUrl) => {
     throw error;
   }
 };
-
