@@ -35,6 +35,7 @@ provider:
                   - "index/EmailIndex"
             - "arn:aws:s3:::${self:custom.s3BucketName}/*"
             - "arn:aws:s3:::${self:custom.s3BucketName}"
+            - arn:aws:dynamodb:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:table/${self:provider.environment.CUSTOMERS_TABLE}
         - Effect: Allow
           Action:
             - cognito-idp:AdminCreateUser
@@ -42,8 +43,11 @@ provider:
             - cognito-idp:AdminDeleteUser
             - cognito-idp:AdminUpdateUserAttributes
             - cognito-idp:AdminUserGlobalSignOut
+            - cognito-idp:AdminEnableUser 
+            - cognito-idp:AdminDisableUser
           Resource:
-           - arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+            - arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+            - arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.CUSTOMER_POOL_ID} 
         - Effect: Allow
           Action:
             - execute-api:ManageConnections
@@ -53,12 +57,14 @@ provider:
     USERS_TABLE: ${self:custom.usersTableName}
     PRODUCTS_TABLE: ${self:custom.productsTableName}
     CATEGORIES_TABLE: ${self:custom.categoriesTableName}
+    CUSTOMERS_TABLE: customers-table-dev
     REGION: us-east-1
     USER_POOL_ID: ${env:USER_POOL_ID}
     CLIENT_ID: ${env:CLIENT_ID}
     ACCOUNT_ID: ${env:ACCOUNT_ID}
     STRIPE_SECRET_KEY: ${env:STRIPE_SECRET_KEY}
     S3_BUCKET_NAME: ${self:custom.s3BucketName}
+    CUSTOMER_POOL_ID: ${env:CUSTOMER_POOL_ID}
 
 custom:
   usersTableName: "users-table-${self:provider.stage}"
@@ -223,6 +229,23 @@ functions:
               - Authorization
           authorizer:
             arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+      - http:
+          path: customers
+          method: get
+          cors: true
+      - http:
+          path: customers/{customerId}
+          method: get
+          cors: true
+      - http:
+          path: customers/{customerId}
+          method: patch
+          cors: true
+      - http:
+          path: customers/{customerId}
+          method: delete
+          cors: true
+          
 
 resources:
   Resources:
