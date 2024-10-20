@@ -2,6 +2,7 @@ useDotenv: true
 org: rafet
 app: rafet-test-api
 service: test-2
+
 plugins:
   - serverless-dotenv-plugin
 
@@ -21,10 +22,6 @@ provider:
             - dynamodb:PutItem
             - dynamodb:UpdateItem
             - dynamodb:DeleteItem
-            - s3:PutObject
-            - s3:GetObject
-            - s3:ListBucket
-            - s3:DeleteObject
           Resource:
             - Fn::GetAtt: [UsersTable, Arn]
             - Fn::GetAtt: [ProductsTable, Arn]
@@ -36,6 +33,16 @@ provider:
             - "arn:aws:s3:::${self:custom.s3BucketName}/*"
             - "arn:aws:s3:::${self:custom.s3BucketName}"
             - arn:aws:dynamodb:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:table/${self:provider.environment.CUSTOMERS_TABLE}
+            - arn:aws:dynamodb:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:table/${self:provider.environment.ORDERS_TABLE}
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+            - s3:DeleteObject
+            - s3:ListBucket
+          Resource:
+            - "arn:aws:s3:::${self:custom.s3BucketName_CUSTOMER}/*"
+            - "arn:aws:s3:::${self:custom.s3BucketName_CUSTOMER}"
         - Effect: Allow
           Action:
             - cognito-idp:AdminCreateUser
@@ -43,21 +50,23 @@ provider:
             - cognito-idp:AdminDeleteUser
             - cognito-idp:AdminUpdateUserAttributes
             - cognito-idp:AdminUserGlobalSignOut
-            - cognito-idp:AdminEnableUser 
+            - cognito-idp:AdminEnableUser
             - cognito-idp:AdminDisableUser
           Resource:
             - arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
-            - arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.CUSTOMER_POOL_ID} 
+            - arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.CUSTOMER_POOL_ID}
         - Effect: Allow
           Action:
             - execute-api:ManageConnections
           Resource:
             - arn:aws:execute-api:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:31zsiurny9/production/POST/@connections/*
+
   environment:
     USERS_TABLE: ${self:custom.usersTableName}
     PRODUCTS_TABLE: ${self:custom.productsTableName}
     CATEGORIES_TABLE: ${self:custom.categoriesTableName}
     CUSTOMERS_TABLE: customers-table-dev
+    ORDERS_TABLE: orders-table-dev
     REGION: us-east-1
     USER_POOL_ID: ${env:USER_POOL_ID}
     CLIENT_ID: ${env:CLIENT_ID}
@@ -65,170 +74,79 @@ provider:
     STRIPE_SECRET_KEY: ${env:STRIPE_SECRET_KEY}
     S3_BUCKET_NAME: ${self:custom.s3BucketName}
     CUSTOMER_POOL_ID: ${env:CUSTOMER_POOL_ID}
+    S3_BUCKET_NAME_CUSTOMER: profile-pictures-dev-us-east-1
 
 custom:
   usersTableName: "users-table-${self:provider.stage}"
   productsTableName: "products-table-${self:provider.stage}"
   categoriesTableName: "categories-table-${self:provider.stage}"
   s3BucketName: "product-images-${self:provider.stage}-${self:provider.region}"
+  s3BucketName_CUSTOMER: "profile-pictures-${self:provider.stage}-${self:provider.region}"
 
 functions:
   api:
     handler: src/handler.handler
     events:
-      # User routes
       - http:
           path: users/{userId}
           method: get
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: users/{userId}
           method: delete
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: users/{userId}
           method: patch
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: users
           method: get
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: users
           method: post
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
-      # Product routes
+          cors: true
       - http:
           path: products/{productId}
           method: get
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: products/{productId}
           method: delete
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: products/{productId}
           method: patch
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: products
           method: get
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: products
           method: post
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
-      # Category routes
+          cors: true
       - http:
           path: categories/{categoryId}
           method: get
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: categories/{categoryId}
           method: delete
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: categories/{categoryId}
           method: patch
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: categories
           method: get
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: categories
           method: post
-          cors:
-            origin: "*"
-            headers:
-              - Content-Type
-              - Authorization
-          authorizer:
-            arn: arn:aws:cognito-idp:${self:provider.region}:${self:provider.environment.ACCOUNT_ID}:userpool/${self:provider.environment.USER_POOL_ID}
+          cors: true
       - http:
           path: customers
           method: get
@@ -245,8 +163,26 @@ functions:
           path: customers/{customerId}
           method: delete
           cors: true
-          
-
+      - http:
+          path: orders
+          method: get
+          cors: true
+      - http:
+          path: orders/{orderId}
+          method: delete
+          cors: true
+      - http:
+          path: orders/{orderId}
+          method: patch
+          cors: true
+      - http:
+          path: orders/{orderId}
+          method: get
+          cors: true
+      - http:
+          path: orders/refund
+          method: post
+          cors: true
 resources:
   Resources:
     UsersTable:

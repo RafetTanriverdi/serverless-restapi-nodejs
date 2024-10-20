@@ -5,6 +5,7 @@ const userRouter = require("./routes/usersRoute");
 const productRouter = require("./routes/productsRoute");
 const categoryRouter = require("./routes/categoryRoute");
 const customersRouter = require("./routes/customersRoute");
+const ordersRouter = require("./routes/ordersRoute");
 require("dotenv").config();
 
 const app = express();
@@ -41,6 +42,7 @@ app.use("/users", userRouter);
 app.use("/products", productRouter);
 app.use("/categories", categoryRouter);
 app.use("/customers", customersRouter);
+app.use("/orders", ordersRouter);
 
 app.use((req, res, next) => {
   return res.status(404).json({

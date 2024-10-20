@@ -14,11 +14,14 @@ const {
 } = require("@aws-sdk/lib-dynamodb");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
+
 const client = new DynamoDBClient();
 const docClient = DynamoDBDocumentClient.from(client);
 const cognitoClient = new CognitoIdentityProviderClient();
 const CUSTOMERS_TABLE = process.env.CUSTOMERS_TABLE;
-
+const s3Client = new S3Client();
 const CUSTOMER_POOL_ID = process.env.CUSTOMER_POOL_ID;
 
 exports.ListCustomers = async (req, res) => {
@@ -44,21 +47,33 @@ exports.GetCustomer = async (req, res) => {
   const { customerId } = req.params;
 
   const getCustomerParams = {
-    TableName: CUSTOMERS_TABLE,
+    TableName: process.env.CUSTOMERS_TABLE,
     Key: { customerId },
   };
 
   try {
     const { Item } = await docClient.send(new GetCommand(getCustomerParams));
 
+    if (!Item) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
     const charges = await stripe.charges.list({
       customer: Item.customerStripeId,
     });
 
-    if (!Item) {
-      return res.status(404).json({ message: "Customer not found" });
+    if (Item.profilePicture) {
+      const profilePictureUrl = await getSignedUrl(
+        s3Client,
+        new GetObjectCommand({
+          Bucket: process.env.S3_BUCKET_NAME_CUSTOMER,
+          Key: Item.profilePicture,
+        }),
+        { expiresIn: 86400 }
+      );
+      Item.profilePictureUrl = profilePictureUrl;
     }
-    console.log(Item, charges.data);
+
     res.status(200).json({ ...Item, charges: charges.data });
   } catch (error) {
     res.status(500).json({ error: error.message });
