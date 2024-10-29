@@ -183,6 +183,19 @@ functions:
           path: orders/refund
           method: post
           cors: true
+      - http:
+          path: stripe/transactions
+          method: get
+          cors: true
+      - http:
+          path: stripe/balance
+          method: get
+          cors: true
+      - http:
+          path: stripe/refunds
+          method: get
+          cors: true
+
 resources:
   Resources:
     UsersTable:

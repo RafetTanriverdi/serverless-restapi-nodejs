@@ -16,7 +16,6 @@ const ORDERS_TABLE = process.env.ORDERS_TABLE;
 const { unmarshall } = AWS.DynamoDB.Converter;
 
 exports.ListOrders = async (req, res) => {
-
   const listOrdersParams = {
     TableName: ORDERS_TABLE,
   };
@@ -48,7 +47,7 @@ exports.GetOrder = async (req, res) => {
     console.log("Item:", Item);
     res.status(200).json(Item);
   } catch (error) {
-    console.error("Error getting order:", error); 
+    console.error("Error getting order:", error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -107,24 +106,26 @@ exports.DeleteOrder = async (req, res) => {
   }
 };
 
-
 exports.RefundOrder = async (req, res) => {
   const { orderId } = req.body;
 
-  const status = "Item returned";
+  const status = "Item Returned";
+  const paymentStatus = "Refunded";
   const currentTimestamp = new Date().toISOString();
 
   const updateOrderParams = {
     TableName: ORDERS_TABLE,
     Key: { orderId },
     UpdateExpression:
-      "set #currentStatus = :status, #statusHistory = list_append(if_not_exists(#statusHistory, :empty_list), :newStatus)",
+      "set #currentStatus = :status, #paymentStatus = :paymentStatus, #statusHistory = list_append(if_not_exists(#statusHistory, :empty_list), :newStatus)",
     ExpressionAttributeNames: {
       "#currentStatus": "currentStatus",
+      "#paymentStatus": "paymentStatus",
       "#statusHistory": "statusHistory",
     },
     ExpressionAttributeValues: {
       ":status": status,
+      ":paymentStatus": paymentStatus,
       ":newStatus": [
         {
           status: status,
@@ -138,7 +139,7 @@ exports.RefundOrder = async (req, res) => {
 
   try {
     const refund = await stripe.refunds.create({
-      charge: orderId, 
+      charge: orderId,
     });
 
     if (!refund) {
