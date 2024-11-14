@@ -1,19 +1,18 @@
 const express = require("express");
 const serverless = require("serverless-http");
 const bodyParser = require("body-parser");
+
 const userRouter = require("./routes/usersRoute");
 const productRouter = require("./routes/productsRoute");
 const categoryRouter = require("./routes/categoryRoute");
 const customersRouter = require("./routes/customersRoute");
 const ordersRouter = require("./routes/ordersRoute");
 const stripeRouter = require("./routes/stripeRoute");
-require("dotenv").config();
 
 const app = express();
 
-app.use(express.json());
-app.use(bodyParser.json({ limit: "50mb" }));
-app.use(bodyParser.urlencoded({ limit: "50mb", extended: true }));
+app.use(bodyParser.json({ limit: "10mb" }));
+app.use(bodyParser.urlencoded({ limit: "10mb", extended: true }));
 
 // CORS Middleware
 app.use((req, res, next) => {
@@ -29,22 +28,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware to add timestamps
-app.use((req, res, next) => {
-  if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
-    req.body.createdAt = new Date().toISOString();
-    req.body.updatedAt = new Date().toISOString();
-  }
-  next();
-});
-
 //Routes
 app.use("/users", userRouter);
 app.use("/products", productRouter);
 app.use("/categories", categoryRouter);
 app.use("/customers", customersRouter);
 app.use("/orders", ordersRouter);
-app.use('/stripe',stripeRouter )
+app.use("/stripe", stripeRouter);
 
 app.use((req, res, next) => {
   return res.status(404).json({

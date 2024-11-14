@@ -13,6 +13,14 @@ const { uploadImageToS3 } = require("../models/s3Upload");
 const { deleteImageS3 } = require("../models/deleteImageFromS3");
 
 const {
+  S3Client,
+  GetObjectCommand,
+  PutObjectCommand,
+} = require("@aws-sdk/client-s3");
+
+const s3Client = new S3Client();
+
+const {
   AdminGetUserCommand,
   CognitoIdentityProviderClient,
 } = require("@aws-sdk/client-cognito-identity-provider");
@@ -113,7 +121,7 @@ exports.CreateProduct = async (req, res) => {
     productName,
     price,
     description,
-    images, 
+    images,
     categoryId,
     stock = 0,
     active = true,
@@ -163,15 +171,12 @@ exports.CreateProduct = async (req, res) => {
     }
     const categoryName = categoryData.Item.categoryName;
 
-  
     const imageUrls = [];
     for (const { imageBase64, imageMimeType } of images) {
       try {
-        const imageUrl = await uploadImageToS3(
-          Buffer.from(imageBase64, "base64"),
-          imageMimeType
-        );
-        imageUrls.push(imageUrl);
+        const buffer = Buffer.from(imageBase64, "base64");
+        const url = await uploadImageToS3(buffer, imageMimeType);
+        imageUrls.push(url);
       } catch (error) {
         console.error("Image upload failed:", error);
         return res.status(500).json({ message: "Image upload failed" });
@@ -185,7 +190,7 @@ exports.CreateProduct = async (req, res) => {
     const stripeProduct = await stripe.products.create({
       name: productName,
       description,
-      images: imageUrls, 
+      images: imageUrls,
       metadata: {
         stock: stock.toString(),
       },
@@ -204,7 +209,7 @@ exports.CreateProduct = async (req, res) => {
       productName,
       price,
       description,
-      imageUrls, 
+      imageUrls,
       stripeProductId: stripeProduct.id,
       stripePriceId: stripePrice.id,
       categoryId,
@@ -250,7 +255,7 @@ exports.PatchProduct = async (req, res) => {
     price,
     description,
     images = [],
-    imageUrls = [], 
+    imageUrls = [],
     categoryId,
     active,
     stock,
@@ -293,7 +298,6 @@ exports.PatchProduct = async (req, res) => {
 
     stripeProductId = product.stripeProductId;
 
-  
     for (const { imageBase64, imageMimeType } of images) {
       try {
         const imageUrl = await uploadImageToS3(
@@ -306,7 +310,6 @@ exports.PatchProduct = async (req, res) => {
         return res.status(500).json({ message: "Image upload failed" });
       }
     }
-
   } catch (error) {
     console.error("Error fetching product:", error);
     return res.status(500).json({ message: "Error fetching product" });
@@ -335,7 +338,7 @@ exports.PatchProduct = async (req, res) => {
     await stripe.products.update(stripeProductId, {
       name: productName,
       description,
-      ...(imageUrls.length > 0 && { images: imageUrls }),  
+      ...(imageUrls.length > 0 && { images: imageUrls }),
       active: active !== undefined ? active : true,
       metadata: {
         stock: stock.toString(),
@@ -368,8 +371,10 @@ exports.PatchProduct = async (req, res) => {
       Key: { productId },
       UpdateExpression:
         `SET #productName = :productName, price = :price, description = :description, updatedAt = :updatedAt, 
-         stripePriceId = :stripePriceId, stock = :stock, imageUrls = :imageUrls` + 
-        (categoryId ? ", categoryId = :categoryId, categoryName = :categoryName" : "") +
+         stripePriceId = :stripePriceId, stock = :stock, imageUrls = :imageUrls` +
+        (categoryId
+          ? ", categoryId = :categoryId, categoryName = :categoryName"
+          : "") +
         (active !== undefined ? ", active = :active" : "") +
         (sharedStatus ? ", familyId = :familyId" : ""),
       ExpressionAttributeNames: { "#productName": "productName" },
@@ -380,8 +385,11 @@ exports.PatchProduct = async (req, res) => {
         ":updatedAt": updatedAt,
         ":stripePriceId": stripePrice.id,
         ":stock": stock,
-        ":imageUrls": imageUrls, 
-        ...(categoryId && { ":categoryId": categoryId, ":categoryName": categoryName }),
+        ":imageUrls": imageUrls,
+        ...(categoryId && {
+          ":categoryId": categoryId,
+          ":categoryName": categoryName,
+        }),
         ...(active !== undefined && { ":active": active }),
         ...(sharedStatus && { ":familyId": product.familyId }),
       },
@@ -397,7 +405,6 @@ exports.PatchProduct = async (req, res) => {
     });
   }
 };
-
 
 exports.DeleteProduct = async (req, res) => {
   const { productId } = req.params;
@@ -434,7 +441,7 @@ exports.DeleteProduct = async (req, res) => {
 
     try {
       for (const imageUrl of product.imageUrls || []) {
-        await deleteImageS3(imageUrl); 
+        await deleteImageS3(imageUrl);
       }
     } catch (error) {
       console.error("Error deleting images from S3:", error);
@@ -443,19 +450,16 @@ exports.DeleteProduct = async (req, res) => {
         .json({ message: "Could not delete images from S3" });
     }
 
-  
     try {
       await stripe.products.update(product.stripeProductId, {
         active: false,
       });
-    
     } catch (error) {
       console.error("Error marking product as inactive in Stripe:", error);
       return res
         .status(500)
         .json({ message: "Could not update product in Stripe" });
     }
-
 
     const updateCategoryParams = {
       TableName: process.env.CATEGORIES_TABLE,
@@ -478,7 +482,6 @@ exports.DeleteProduct = async (req, res) => {
         .json({ message: "Could not update category product count" });
     }
 
-  
     const deleteParams = {
       TableName: PRODUCTS_TABLE,
       Key: { productId },

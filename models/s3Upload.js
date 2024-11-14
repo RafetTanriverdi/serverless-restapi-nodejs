@@ -1,6 +1,6 @@
-const AWS = require('aws-sdk');
+const AWS = require("aws-sdk");
 const s3 = new AWS.S3();
-const { v4: uuidv4 } = require('uuid');
+const { v4: uuidv4 } = require("uuid");
 
 exports.uploadImageToS3 = async (imageData, mimeType) => {
   const imageId = uuidv4();
@@ -16,6 +16,13 @@ exports.uploadImageToS3 = async (imageData, mimeType) => {
     return Location;
   } catch (error) {
     console.error("Error uploading image to S3: ", error);
+
+    if (error.code === "NetworkingError") {
+      console.error("Network error occurred during S3 upload");
+    } else if (error.code === "AccessDenied") {
+      console.error("Access denied. Check S3 bucket permissions");
+    }
+
     throw new Error("Image upload failed");
   }
 };
