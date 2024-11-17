@@ -44,10 +44,8 @@ exports.GetOrder = async (req, res) => {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    console.log("Item:", Item);
     res.status(200).json(Item);
   } catch (error) {
-    console.error("Error getting order:", error);
     res.status(500).json({ error: error.message });
   }
 };

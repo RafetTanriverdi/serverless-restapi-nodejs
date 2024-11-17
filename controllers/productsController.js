@@ -69,7 +69,6 @@ exports.ListProducts = async (req, res) => {
     const { Items } = await docClient.send(new ScanCommand(params));
     res.json(Items);
   } catch (error) {
-    console.error(error);
     res.status(500).json({ message: "Could not retrieve products" });
   }
 };
@@ -111,7 +110,6 @@ exports.GetProduct = async (req, res) => {
         .json({ message: "Could not find product or access denied" });
     }
   } catch (error) {
-    console.error(error);
     res.status(500).json({ message: "Could not retrieve product" });
   }
 };
@@ -143,7 +141,6 @@ exports.CreateProduct = async (req, res) => {
     }
     familyId = Item.familyId || ownerId;
   } catch (error) {
-    console.error("Error fetching user data:", error);
     return res.status(500).json({ message: "Could not fetch user data" });
   }
 
@@ -178,7 +175,6 @@ exports.CreateProduct = async (req, res) => {
         const url = await uploadImageToS3(buffer, imageMimeType);
         imageUrls.push(url);
       } catch (error) {
-        console.error("Image upload failed:", error);
         return res.status(500).json({ message: "Image upload failed" });
       }
     }
@@ -244,7 +240,6 @@ exports.CreateProduct = async (req, res) => {
 
     res.json(productItem);
   } catch (error) {
-    console.error("Error creating product: ", error);
     res.status(500).json({ message: "Could not create product" });
   }
 };
@@ -306,12 +301,10 @@ exports.PatchProduct = async (req, res) => {
         );
         imageUrls.push(imageUrl);
       } catch (error) {
-        console.error("Image upload failed:", error);
         return res.status(500).json({ message: "Image upload failed" });
       }
     }
   } catch (error) {
-    console.error("Error fetching product:", error);
     return res.status(500).json({ message: "Error fetching product" });
   }
 
@@ -329,7 +322,6 @@ exports.PatchProduct = async (req, res) => {
       }
       categoryName = categoryData.Item.categoryName;
     } catch (error) {
-      console.error("Error fetching category:", error);
       return res.status(500).json({ message: "Error fetching category" });
     }
   }
@@ -345,7 +337,6 @@ exports.PatchProduct = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Stripe product update failed:", error);
     return res.status(500).json({
       message: `Could not update product in Stripe: ${error.message}`,
     });
@@ -399,7 +390,6 @@ exports.PatchProduct = async (req, res) => {
     const { Attributes } = await docClient.send(new UpdateCommand(params));
     res.json(Attributes);
   } catch (error) {
-    console.error("DynamoDB update failed:", error);
     return res.status(500).json({
       message: `Could not update product in DynamoDB: ${error.message}`,
     });
@@ -444,7 +434,6 @@ exports.DeleteProduct = async (req, res) => {
         await deleteImageS3(imageUrl);
       }
     } catch (error) {
-      console.error("Error deleting images from S3:", error);
       return res
         .status(500)
         .json({ message: "Could not delete images from S3" });
@@ -455,7 +444,6 @@ exports.DeleteProduct = async (req, res) => {
         active: false,
       });
     } catch (error) {
-      console.error("Error marking product as inactive in Stripe:", error);
       return res
         .status(500)
         .json({ message: "Could not update product in Stripe" });
@@ -476,7 +464,6 @@ exports.DeleteProduct = async (req, res) => {
     try {
       await docClient.send(new UpdateCommand(updateCategoryParams));
     } catch (error) {
-      console.error("Error updating category product count:", error);
       return res
         .status(500)
         .json({ message: "Could not update category product count" });
@@ -495,13 +482,11 @@ exports.DeleteProduct = async (req, res) => {
       await docClient.send(new DeleteCommand(deleteParams));
       res.json({ message: "Product deleted successfully" });
     } catch (error) {
-      console.error("Error deleting product from DynamoDB:", error);
       res
         .status(500)
         .json({ message: "Could not delete product from database" });
     }
   } catch (error) {
-    console.error("General error:", error);
     res.status(500).json({ message: "Could not process request" });
   }
 };

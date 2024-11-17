@@ -17,7 +17,6 @@ const authMiddleware = (requiredPermissions) => {
       req.user = decodedToken;
       next();
     } catch (error) {
-      console.error("Authorization error:", error);
       res.status(401).json({ message: "Unauthorized", details: error.message });
     }
   };

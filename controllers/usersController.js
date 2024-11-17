@@ -66,7 +66,6 @@ exports.CreateUser = async (req, res) => {
         .json({ message: "A user with this email already exists" });
     }
   } catch (error) {
-    console.error(error);
     return res
       .status(500)
       .json({ message: "Could not check email uniqueness" });
@@ -91,7 +90,6 @@ exports.CreateUser = async (req, res) => {
       new AdminCreateUserCommand(cognitoParams)
     );
   } catch (error) {
-    console.error(error);
     return res
       .status(500)
       .json({ message: "Could not create user in Cognito" });
@@ -108,7 +106,7 @@ exports.CreateUser = async (req, res) => {
     );
     userStatus = userData.UserStatus || userStatus;
   } catch (error) {
-    console.error("Error fetching user status from Cognito:", error);
+    res.status(500).json({ message: "Could not retrieve user status" });
   }
 
   const ownerId =  req.user.sub;
@@ -154,7 +152,6 @@ exports.CreateUser = async (req, res) => {
       updatedAt,
     });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ message: "Could not create user in DynamoDB" });
   }
 };
@@ -197,7 +194,6 @@ exports.ListUsers = async (req, res) => {
     const { Items } = await docClient.send(new ScanCommand(listUsersParams));
     res.json(Items);
   } catch (error) {
-    console.error(error);
     res.status(500).json({ message: "Could not retrieve users" });
   }
 };
@@ -225,7 +221,6 @@ exports.GetUser = async (req, res) => {
         .json({ message: 'Could not find user with provided "userId"' });
     }
   } catch (error) {
-    console.error(error);
     res.status(500).json({ message: "Could not retrieve user" });
   }
 };
@@ -299,7 +294,6 @@ exports.PatchUser = async (req, res) => {
     );
     res.json(Attributes);
   } catch (error) {
-    console.error("Update error:", error);
     res.status(500).json({ message: "Could not update user" });
   }
 };
@@ -346,7 +340,7 @@ exports.DeleteUser = async (req, res) => {
             connectionId
           );
         } else {
-          console.error("Failed to send message via WebSocket:", error);
+          res.status(500).json({ message: "Could not send message" });
         }
       }
     }
@@ -361,7 +355,6 @@ exports.DeleteUser = async (req, res) => {
 
     res.json({ message: "User deleted successfully" });
   } catch (error) {
-    console.error(error);
     res.status(500).json({ message: "Could not delete user" });
   }
 };

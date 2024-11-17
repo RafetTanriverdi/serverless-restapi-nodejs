@@ -39,7 +39,6 @@ exports.CreateCategory = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
   } catch (error) {
-    console.error("Error fetching user data:", error);
     return res.status(500).json({ message: "Could not fetch user data" });
   }
 
@@ -66,7 +65,6 @@ exports.CreateCategory = async (req, res) => {
     await docClient.send(new PutCommand(params));
     res.json(categoryItem);
   } catch (error) {
-    console.error("Error creating category: ", error);
     res.status(500).json({ message: "Could not create category" });
   }
 };
@@ -104,7 +102,6 @@ exports.GetCategory = async (req, res) => {
         .json({ message: "Could not find category or access denied" });
     }
   } catch (error) {
-    console.error(error);
     res.status(500).json({ message: "Could not retrieve category" });
   }
 };
@@ -146,7 +143,6 @@ exports.ListCategories = async (req, res) => {
     const { Items } = await docClient.send(new ScanCommand(params));
     res.json(Items);
   } catch (error) {
-    console.error(error);
     res.status(500).json({ message: "Could not retrieve categories" });
   }
 };
@@ -254,7 +250,6 @@ exports.UpdateCategory = async (req, res) => {
 
     res.json(Attributes);
   } catch (error) {
-    console.error("Error updating category and associated products:", error);
     res
       .status(500)
       .json({ message: "Could not update category or associated products" });
@@ -310,11 +305,9 @@ exports.DeleteCategory = async (req, res) => {
       await docClient.send(new DeleteCommand(deleteParams));
       res.json({ message: "Category deleted successfully" });
     } catch (error) {
-      console.error("Error deleting category:", error);
       res.status(500).json({ message: "Could not delete category" });
     }
   } catch (error) {
-    console.error("Error fetching category or user data:", error);
     res.status(500).json({ message: "Could not process request" });
   }
 };

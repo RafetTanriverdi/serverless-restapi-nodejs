@@ -10,7 +10,8 @@ exports.deleteImageS3 = async (imageUrl) => {
   try {
     await s3.deleteObject(params).promise();
   } catch (error) {
-    console.error("Error deleting image from S3:", error);
+ 
+    res.status(500).json({ error: error.message });
     throw error;
   }
 };

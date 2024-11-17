@@ -15,12 +15,12 @@ exports.uploadImageToS3 = async (imageData, mimeType) => {
     const { Location } = await s3.upload(params).promise();
     return Location;
   } catch (error) {
-    console.error("Error uploading image to S3: ", error);
 
     if (error.code === "NetworkingError") {
-      console.error("Network error occurred during S3 upload");
+     
+      res.status(500).json({ error: error.message });
     } else if (error.code === "AccessDenied") {
-      console.error("Access denied. Check S3 bucket permissions");
+      res.status(403).json({ error: error.message });                
     }
 
     throw new Error("Image upload failed");
