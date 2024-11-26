@@ -39,7 +39,6 @@ exports.ListCustomers = async (req, res) => {
     res.status(200).json(Items);
   } catch (error) {
     res.status(500).json({ error: error.message });
-    console.error(error);
   }
 };
 
@@ -115,7 +114,6 @@ exports.UpdateCustomer = async (req, res) => {
     res.status(200).json(Attributes);
   } catch (error) {
     res.status(500).json({ error: error.message });
-    console.error(error);
   }
 };
 
@@ -142,6 +140,5 @@ exports.DeleteCustomer = async (req, res) => {
     res.status(200).json({ message: "Customer deleted" });
   } catch (error) {
     res.status(500).json({ error: error.message });
-    console.error(error);
   }
 };

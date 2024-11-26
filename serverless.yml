@@ -192,6 +192,10 @@ functions:
           method: get
           cors: true
       - http:
+          path: stripe/balance/{customerStripeId}
+          method: get
+          cors: true
+      - http:
           path: stripe/refunds
           method: get
           cors: true

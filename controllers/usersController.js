@@ -109,14 +109,14 @@ exports.CreateUser = async (req, res) => {
     res.status(500).json({ message: "Could not retrieve user status" });
   }
 
-  const ownerId =  req.user.sub;
+  const ownerId = req.user.sub;
   const userId = cognitoUser.User.Attributes.find(
     (attr) => attr.Name === "sub"
   ).Value;
   const createdAt = new Date().toISOString();
   const updatedAt = createdAt;
 
-  const familyId = currentUser.familyId ||ownerId;
+  const familyId = currentUser.familyId || ownerId;
 
   const dynamoParams = {
     TableName: USERS_TABLE,
@@ -227,73 +227,92 @@ exports.GetUser = async (req, res) => {
 
 exports.PatchUser = async (req, res) => {
   const { userId } = req.params;
-  const { name, role, permissions, phoneNumber } = req.body;
+  const { name, role, permissions, phoneNumber, gender, birthday } = req.body;
 
   const getUserParams = {
     TableName: USERS_TABLE,
     Key: { userId },
   };
 
-
   try {
+    // Mevcut kullanıcı bilgilerini al
     const { Item } = await docClient.send(new GetCommand(getUserParams));
+    if (!Item) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
+    const updatedName = name || Item.name;
+    const updatedRole = role || Item.role;
+    const updatedPermissions =
+      Array.isArray(permissions) && permissions.length > 0
+        ? permissions.join(",")
+        : Item.permissions;
+    const updatedPhoneNumber = phoneNumber || Item.phoneNumber;
+    const updatedGender = gender || Item.gender;
+    const updatedBirthday = birthday || Item.birthday;
+
+    // Cognito User Attributes güncellemesi için geçerli değerler ekleniyor
+    const userAttributes = [
+      { Name: "name", Value: updatedName },
+      { Name: "custom:phone_number", Value: updatedPhoneNumber },
+      { Name: "custom:role", Value: updatedRole },
+      { Name: "custom:permissions", Value: updatedPermissions },
+    ];
+
+    if (updatedGender && process.env.ENABLE_CUSTOM_GENDER) {
+      userAttributes.push({ Name: "custom:gender", Value: updatedGender });
+    }
+
+    if (updatedBirthday && process.env.ENABLE_CUSTOM_BIRTHDAY) {
+      userAttributes.push({ Name: "custom:birthday", Value: updatedBirthday });
+    }
 
     const cognitoParams = {
       UserPoolId: USER_POOL_ID,
       Username: Item.email,
-      UserAttributes: [
-        {
-          Name: "name",
-          Value: name,
-        },
-        {
-          Name: "custom:phone_number",
-          Value: phoneNumber,
-        },
-        {
-          Name: "custom:role",
-          Value: role,
-        },
-        {
-          Name: "custom:permissions",
-          Value: permissions.join(","),
-        },
-      ],
+      UserAttributes: userAttributes,
     };
 
     await cognitoClient.send(
       new AdminUpdateUserAttributesCommand(cognitoParams)
     );
 
+    const updatedAt = new Date().toISOString();
+
     const dynamoParams = {
       TableName: USERS_TABLE,
       Key: { userId },
       UpdateExpression:
-        "SET #name = :name, #role = :role, #permissions = :permissions, #phoneNumber = :phoneNumber, updatedAt = :updatedAt",
+        "SET #name = :name, #role = :role, #permissions = :permissions, #phoneNumber = :phoneNumber, updatedAt = :updatedAt" +
+        (updatedGender ? ", #gender = :gender" : "") +
+        (updatedBirthday ? ", #birthday = :birthday" : ""),
       ExpressionAttributeNames: {
         "#name": "name",
         "#role": "role",
         "#permissions": "permissions",
         "#phoneNumber": "phoneNumber",
+        ...(updatedGender && { "#gender": "gender" }),
+        ...(updatedBirthday && { "#birthday": "birthday" }),
       },
       ExpressionAttributeValues: {
-        ":name": name,
-        ":role": role,
-        ":permissions": permissions,
-        ":phoneNumber": phoneNumber,
-        ":updatedAt": new Date().toISOString(),
-        ":ownerId": req.user.sub,
+        ":name": updatedName,
+        ":role": updatedRole,
+        ":permissions": updatedPermissions,
+        ":phoneNumber": updatedPhoneNumber,
+        ":updatedAt": updatedAt,
+        ...(updatedGender && { ":gender": updatedGender }),
+        ...(updatedBirthday && { ":birthday": updatedBirthday }),
       },
-      ConditionExpression: "ownerId = :ownerId",
       ReturnValues: "ALL_NEW",
     };
 
     const { Attributes } = await docClient.send(
       new UpdateCommand(dynamoParams)
     );
+
     res.json(Attributes);
   } catch (error) {
+    console.error("Error updating user:", error);
     res.status(500).json({ message: "Could not update user" });
   }
 };
@@ -315,7 +334,9 @@ exports.DeleteUser = async (req, res) => {
     const { Item } = await docClient.send(new GetCommand(getUserParams));
     if (
       !Item ||
-      (Item.ownerId !== req.user.sub && Item.userId !== req.user.sub&&Item.familyId!==req.userId)
+      (Item.ownerId !== req.user.sub &&
+        Item.userId !== req.user.sub &&
+        Item.familyId !== req.userId)
     ) {
       return res.status(403).json({ message: "Access denied" });
     }
@@ -355,6 +376,7 @@ exports.DeleteUser = async (req, res) => {
 
     res.json({ message: "User deleted successfully" });
   } catch (error) {
+    console.log(error);
     res.status(500).json({ message: "Could not delete user" });
   }
 };

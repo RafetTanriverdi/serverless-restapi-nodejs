@@ -27,6 +27,24 @@ exports.permissionsList = [
         "User:Delete",
       ],
     },
+    {
+      name:'Orders',
+      permissions:[
+        'Order:Refund',
+        'Order:Read',
+        'Order:Update',
+        'Order:Delete'
+      ]
+    },
+    {
+      name:'Customers',
+      permissions:[
+        'Customer:Read',
+        'Customer:Update',
+        'Customer:Delete',
+        'Customer:Details'
+      ]
+    }
   ];
   
   exports.getPermissionsByName = (name) => {
