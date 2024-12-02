@@ -34,7 +34,7 @@ exports.CreateCategory = async (req, res) => {
     const userData = await docClient.send(new GetCommand(userParams));
     if (userData.Item) {
       ownerName = userData.Item.name;
-      familyId = userData.Item.familyId || ownerId;
+      familyId = userData.Item.familyId;
     } else {
       return res.status(404).json({ message: "User not found" });
     }
@@ -44,6 +44,7 @@ exports.CreateCategory = async (req, res) => {
 
   const categoryItem = {
     categoryId,
+    familyId,
     ownerId,
     ownerName,
     categoryName,
@@ -115,7 +116,6 @@ exports.ListCategories = async (req, res) => {
   );
 
   const ownerId = req.user.sub;
-
   const userParams = {
     TableName: USERS_TABLE,
     Key: { userId: ownerId },
@@ -130,7 +130,6 @@ exports.ListCategories = async (req, res) => {
     }
 
     const familyId = currentUser.familyId;
-
     const params = {
       TableName: CATEGORIES_TABLE,
       FilterExpression: "familyId = :familyId OR ownerId = :ownerId",
@@ -143,6 +142,7 @@ exports.ListCategories = async (req, res) => {
     const { Items } = await docClient.send(new ScanCommand(params));
     res.json(Items);
   } catch (error) {
+    console.log(error);
     res.status(500).json({ message: "Could not retrieve categories" });
   }
 };

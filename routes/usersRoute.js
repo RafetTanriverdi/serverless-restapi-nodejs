@@ -49,4 +49,8 @@ router
     usersController.DeleteUser
   );
 
+router
+  .route("/:userId/my-profile")
+  .get(authenticateToken, usersController.GetMyProfile)
+  .patch(authenticateToken, usersController.UpdateMyProfile);
 module.exports = router;

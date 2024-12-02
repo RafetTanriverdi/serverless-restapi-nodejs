@@ -229,13 +229,13 @@ exports.PatchUser = async (req, res) => {
   const { userId } = req.params;
   const { name, role, permissions, phoneNumber, gender, birthday } = req.body;
 
+  console.log(permissions, "permissions");
   const getUserParams = {
     TableName: USERS_TABLE,
     Key: { userId },
   };
 
   try {
-    // Mevcut kullanıcı bilgilerini al
     const { Item } = await docClient.send(new GetCommand(getUserParams));
     if (!Item) {
       return res.status(404).json({ message: "User not found" });
@@ -243,20 +243,18 @@ exports.PatchUser = async (req, res) => {
 
     const updatedName = name || Item.name;
     const updatedRole = role || Item.role;
-    const updatedPermissions =
-      Array.isArray(permissions) && permissions.length > 0
-        ? permissions.join(",")
-        : Item.permissions;
+    const updatedPermissions = Array.isArray(permissions)
+      ? permissions
+      : Item.permissions;
     const updatedPhoneNumber = phoneNumber || Item.phoneNumber;
     const updatedGender = gender || Item.gender;
     const updatedBirthday = birthday || Item.birthday;
 
-    // Cognito User Attributes güncellemesi için geçerli değerler ekleniyor
     const userAttributes = [
       { Name: "name", Value: updatedName },
       { Name: "custom:phone_number", Value: updatedPhoneNumber },
       { Name: "custom:role", Value: updatedRole },
-      { Name: "custom:permissions", Value: updatedPermissions },
+      { Name: "custom:permissions", Value: updatedPermissions.join(",") },
     ];
 
     if (updatedGender && process.env.ENABLE_CUSTOM_GENDER) {
@@ -378,5 +376,100 @@ exports.DeleteUser = async (req, res) => {
   } catch (error) {
     console.log(error);
     res.status(500).json({ message: "Could not delete user" });
+  }
+};
+
+exports.GetMyProfile = async (req, res) => {
+  const userId = req.user.sub;
+
+  const params = {
+    TableName: USERS_TABLE,
+    Key: { userId },
+  };
+
+  try {
+    const { Item } = await docClient.send(new GetCommand(params));
+    if (Item) {
+      res.json(Item);
+    } else {
+      res.status(404).json({ message: "User not found" });
+    }
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ message: "Could not retrieve user" });
+  }
+};
+exports.UpdateMyProfile = async (req, res) => {
+  const userId = req.user.sub;
+  console.log(res, req);
+  const { name, phoneNumber, birthday, gender } = req.body;
+
+  const getUserParams = {
+    TableName: USERS_TABLE,
+    Key: { userId },
+  };
+
+  try {
+    const { Item } = await docClient.send(new GetCommand(getUserParams));
+    if (!Item) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const userAttributes = [
+      { Name: "name", Value: updatedName },
+      { Name: "custom:phone_number", Value: updatedPhoneNumber },
+      { Name: "custom:role", Value: updatedRole },
+    ];
+
+    const cognitoParams = {
+      UserPoolId: USER_POOL_ID,
+      Username: Item.email,
+      UserAttributes: userAttributes,
+    };
+
+    const updatedName = name || Item.name;
+    const updatedPhoneNumber = phoneNumber || Item.phoneNumber;
+    const updatedGender = gender || Item.gender;
+    const updatedBirthday = birthday || Item.birthday;
+    const updatedAt = new Date().toISOString();
+
+    const dynamoParams = {
+      TableName: USERS_TABLE,
+      Key: { userId },
+      UpdateExpression:
+        "SET #name = :name, #phoneNumber = :phoneNumber, updatedAt = :updatedAt" +
+        (updatedGender ? ", #gender = :gender" : "") +
+        (updatedBirthday ? ", #birthday = :birthday" : ""),
+      ExpressionAttributeNames: {
+        "#name": "name",
+        "#phoneNumber": "phoneNumber",
+        ...(updatedGender && { "#gender": "gender" }),
+        ...(updatedBirthday && { "#birthday": "birthday" }),
+      },
+      ExpressionAttributeValues: {
+        ":name": updatedName,
+        ":phoneNumber": updatedPhoneNumber,
+        ":updatedAt": updatedAt,
+        ...(updatedGender && { ":gender": updatedGender }),
+        ...(updatedBirthday && { ":birthday": updatedBirthday }),
+      },
+      ReturnValues: "ALL_NEW",
+    };
+    try {
+      await cognitoClient.send(
+        new AdminUpdateUserAttributesCommand(cognitoParams)
+      );
+
+      const { Attributes } = await docClient.send(
+        new UpdateCommand(dynamoParams)
+      );
+      res.json(Attributes);
+    } catch (error) {
+      console.error("Error updating user:", error);
+      res.status(500).json({ message: "Could not update user" });
+    }
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json({ message: "Could not retrieve user" });
   }
 };
